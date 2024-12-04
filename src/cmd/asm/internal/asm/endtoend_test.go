@@ -36,7 +36,7 @@ func testEndToEnd(t *testing.T, goarch, file string) {
 	testOut = new(strings.Builder) // The assembler writes test output to this buffer.
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
 	ctxt.IsAsm = true
-	defer ctxt.Bso.Flush()
+	defer swallowError(ctxt.Bso.Flush())
 	failed := false
 	ctxt.DiagFunc = func(format string, args ...interface{}) {
 		failed = true
@@ -290,7 +290,7 @@ func testErrors(t *testing.T, goarch, file string, flags ...string) {
 	var ok bool
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
 	ctxt.IsAsm = true
-	defer ctxt.Bso.Flush()
+	defer swallowError(ctxt.Bso.Flush())
 	failed := false
 	var errBuf bytes.Buffer
 	parser.errorWriter = &errBuf
@@ -489,4 +489,8 @@ func TestRISCVErrors(t *testing.T) {
 
 func TestS390XEndToEnd(t *testing.T) {
 	testEndToEnd(t, "s390x", "s390x")
+}
+
+func swallowError(_ error) {
+	// do nothing
 }
