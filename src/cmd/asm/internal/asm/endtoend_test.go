@@ -211,6 +211,7 @@ Diff:
 		if text == nil {
 			t.Errorf("%s: instruction outside TEXT", p)
 		}
+		//goland:noinspection ALL
 		size := int64(len(text.P)) - p.Pc
 		if p.Link != nil {
 			size = p.Link.Pc - p.Pc
