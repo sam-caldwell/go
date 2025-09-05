@@ -1,0 +1,18 @@
+# decorators must not target init
+
+! go build .
+stderr 'invalid decorator target: init'
+
+-- go.mod --
+module example.com/decorators_disallowed_init
+
+go 1.23
+
+-- p.go --
+package p
+
+func D(f func()) func() { return f }
+
+@D
+func init() {}
+

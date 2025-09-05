@@ -206,6 +206,162 @@ func TestIssue17697(t *testing.T) {
 	}
 }
 
+func TestDecoratorParse(t *testing.T) {
+    // Simple program with decorators
+    const src = `package p
+
+@trace
+@retry(3)
+func F(x int) int { return x }
+`
+    f, err := Parse(NewFileBase("decorators.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    if len(f.DeclList) == 0 {
+        t.Fatalf("no decls parsed")
+    }
+    fd, ok := f.DeclList[0].(*FuncDecl)
+    if !ok {
+        t.Fatalf("first decl not FuncDecl: %T", f.DeclList[0])
+    }
+    if got := len(fd.Decorators); got != 2 {
+        t.Fatalf("expected 2 decorators, got %d", got)
+    }
+}
+
+func TestDecoratorCompositeStructs(t *testing.T) {
+    // Parse decorators with struct keyed composite literals and nested forms.
+    const src = `package p
+
+type Inner struct { X int }
+type Outer struct { Inner; Y int }
+
+@D(Outer{Inner: Inner{X:1}, Y:2})
+func F() {}
+
+@pkg.Dec(pkg.Inner{X:3})
+func G() {}
+`
+    f, err := Parse(NewFileBase("decostructs.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    if len(f.DeclList) < 4 {
+        t.Fatalf("expected 4 decls (2 types, 2 funcs), got %d", len(f.DeclList))
+    }
+    fd1 := f.DeclList[2].(*FuncDecl)
+    if got := len(fd1.Decorators); got != 1 {
+        t.Fatalf("expected 1 decorator on F, got %d", got)
+    }
+    fd2 := f.DeclList[3].(*FuncDecl)
+    if got := len(fd2.Decorators); got != 1 {
+        t.Fatalf("expected 1 decorator on G, got %d", got)
+    }
+}
+
+func TestDecoratorQualifiedAndParameterized(t *testing.T) {
+    const src = `package p
+
+import pkg "m/dec"
+
+@pkg.Dec
+@pkg.Dec(1, "x")
+func H() {}
+`
+    f, err := Parse(NewFileBase("qualified.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    var fd *FuncDecl
+    for _, d := range f.DeclList {
+        if fdecl, ok := d.(*FuncDecl); ok {
+            fd = fdecl
+            break
+        }
+    }
+    if fd == nil {
+        t.Fatalf("no FuncDecl found")
+    }
+    if got := len(fd.Decorators); got != 2 {
+        t.Fatalf("expected 2 decorators, got %d", got)
+    }
+    if _, ok := fd.Decorators[0].(*SelectorExpr); !ok {
+        t.Fatalf("first decorator not a SelectorExpr: %T", fd.Decorators[0])
+    }
+    if call, ok := fd.Decorators[1].(*CallExpr); !ok {
+        t.Fatalf("second decorator not a CallExpr: %T", fd.Decorators[1])
+    } else {
+        if _, ok := call.Fun.(*SelectorExpr); !ok {
+            t.Fatalf("callee of parameterized decorator not SelectorExpr: %T", call.Fun)
+        }
+        if len(call.ArgList) != 2 {
+            t.Fatalf("expected 2 args to parameterized decorator, got %d", len(call.ArgList))
+        }
+    }
+}
+
+func TestMethodDecoratorParse(t *testing.T) {
+    const src = `package p
+
+type T struct{}
+
+@D
+func (t T) M(x int) int { return x }
+`
+    f, err := Parse(NewFileBase("methoddec.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    var fd *FuncDecl
+    for _, d := range f.DeclList {
+        if fdecl, ok := d.(*FuncDecl); ok && fdecl.Recv != nil {
+            fd = fdecl
+            break
+        }
+    }
+    if fd == nil {
+        t.Fatalf("no method FuncDecl found")
+    }
+    if got := len(fd.Decorators); got != 1 {
+        t.Fatalf("expected 1 decorator on method, got %d", got)
+    }
+    if fd.Recv == nil {
+        t.Fatalf("expected receiver on method")
+    }
+}
+
+func TestGenericDecoratorParse(t *testing.T) {
+    const src = `package p
+
+@D
+func G[T any](x T) T { return x }
+`
+    f, err := Parse(NewFileBase("generic.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    if len(f.DeclList) == 0 {
+        t.Fatalf("no decls parsed")
+    }
+    var fd *FuncDecl
+    for _, d := range f.DeclList {
+        if fdecl, ok := d.(*FuncDecl); ok {
+            fd = fdecl
+            break
+        }
+    }
+    if fd == nil {
+        t.Fatalf("no FuncDecl found")
+    }
+    if got := len(fd.Decorators); got != 1 {
+        t.Fatalf("expected 1 decorator on generic func, got %d", got)
+    }
+    if fd.TParamList == nil || len(fd.TParamList) != 1 {
+        t.Fatalf("expected 1 type parameter, got %d", len(fd.TParamList))
+    }
+}
+
 func TestParseFile(t *testing.T) {
 	_, err := ParseFile("", nil, nil, 0)
 	if err == nil {

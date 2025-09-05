@@ -682,6 +682,12 @@ func (p *printer) printRawNode(n Node) {
 		}
 
 	case *FuncDecl:
+		// print decorators, one per line, before the function
+		if len(n.Decorators) > 0 {
+			for _, d := range n.Decorators {
+				p.print(_At, d, newline)
+			}
+		}
 		p.print(_Func, blank)
 		if r := n.Recv; r != nil {
 			p.print(_Lparen)

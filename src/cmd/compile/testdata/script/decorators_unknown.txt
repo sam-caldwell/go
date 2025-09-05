@@ -1,0 +1,16 @@
+# unknown decorator should produce a clear error
+
+! go build .
+stderr 'unknown decorator: Unknown'
+
+-- go.mod --
+module example.com/decorators_unknown
+
+go 1.23
+
+-- p.go --
+package p
+
+@Unknown
+func F() {}
+

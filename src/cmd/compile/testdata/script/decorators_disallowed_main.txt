@@ -1,0 +1,18 @@
+# decorators must not target main.main
+
+! go build .
+stderr 'invalid decorator target: main cannot be decorated'
+
+-- go.mod --
+module example.com/decorators_disallowed_main
+
+go 1.23
+
+-- main.go --
+package main
+
+func D(f func()) func() { return f }
+
+@D
+func main() {}
+

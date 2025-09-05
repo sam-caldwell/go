@@ -1,0 +1,26 @@
+# nested/embedded composite literals as const-evaluable decorator args
+
+go build .
+
+-- go.mod --
+module example.com/decorators_const_nested
+
+go 1.23
+
+-- p.go --
+package p
+
+type Inner struct{ X int }
+type Middle struct{ Inner }
+type Outer struct{
+    Middle
+    Y int
+    A []int
+}
+
+// Factory takes a fully-const-evaluable composite argument.
+func D(o Outer) func(func()) func() { return func(f func()) func() { return f } }
+
+@D(Outer{Middle: Middle{Inner: Inner{X: 1}}, Y: 2, A: []int{1, 2, 3}})
+func F() {}
+

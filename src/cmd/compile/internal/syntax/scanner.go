@@ -196,6 +196,11 @@ redo:
 		}
 		s.tok = _Dot
 
+	case '@':
+		// decorator prefix
+		s.nextch()
+		s.tok = _At
+
 	case '+':
 		s.nextch()
 		s.op, s.prec = Add, precAdd

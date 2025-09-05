@@ -1,0 +1,19 @@
+# decorator signature mismatch should be diagnosed
+
+! go build .
+stderr 'decorator type mismatch'
+
+-- go.mod --
+module example.com/decorators_mismatch
+
+go 1.23
+
+-- main.go --
+package main
+
+// D_mismatch is a decorator with wrong S shape for the decorated function.
+func D_mismatch(x func(int) int) func(int) int { return x }
+
+@D_mismatch
+func B(s string) string { return s }
+

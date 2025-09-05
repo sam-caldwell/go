@@ -11,40 +11,41 @@ type token = Token
 //go:generate stringer -type token -linecomment tokens.go
 
 const (
-	_    token = iota
-	_EOF       // EOF
+    _    token = iota
+    _EOF       // EOF
 
-	// names and literals
-	_Name    // name
-	_Literal // literal
+    // names and literals
+    _Name    // name
+    _Literal // literal
 
-	// operators and operations
-	// _Operator is excluding '*' (_Star)
-	_Operator // op
-	_AssignOp // op=
-	_IncOp    // opop
-	_Assign   // =
-	_Define   // :=
-	_Arrow    // <-
-	_Star     // *
+    // operators and operations
+    // _Operator is excluding '*' (_Star)
+    _Operator // op
+    _AssignOp // op=
+    _IncOp    // opop
+    _Assign   // =
+    _Define   // :=
+    _Arrow    // <-
+    _Star     // *
 
-	// delimiters
-	_Lparen    // (
-	_Lbrack    // [
-	_Lbrace    // {
-	_Rparen    // )
-	_Rbrack    // ]
-	_Rbrace    // }
-	_Comma     // ,
-	_Semi      // ;
-	_Colon     // :
-	_Dot       // .
-	_DotDotDot // ...
+    // delimiters
+    _Lparen    // (
+    _Lbrack    // [
+    _Lbrace    // {
+    _Rparen    // )
+    _Rbrack    // ]
+    _Rbrace    // }
+    _Comma     // ,
+    _Semi      // ;
+    _Colon     // :
+    _Dot       // .
+    _DotDotDot // ...
+    _At        // @
 
-	// keywords
-	_Break       // break
-	_Case        // case
-	_Chan        // chan
+    // keywords
+    _Break       // break
+    _Case        // case
+    _Chan        // chan
 	_Const       // const
 	_Continue    // continue
 	_Default     // default
@@ -69,7 +70,7 @@ const (
 	_Var         // var
 
 	// empty line comment to exclude it from .String
-	tokenCount //
+    tokenCount //
 )
 
 const (

@@ -2539,7 +2539,8 @@ type typeDeclGen struct {
 }
 
 type fileImports struct {
-	importedEmbed, importedUnsafe bool
+    importedEmbed, importedUnsafe bool
+    aliases                       map[string]string // import name -> package path
 }
 
 // declCollector is a visitor type that collects compiler-needed
@@ -2581,7 +2582,17 @@ func (c *declCollector) Visit(n syntax.Node) syntax.Visitor {
 	case *syntax.ImportDecl:
 		pw.checkPragmas(n.Pragma, 0, false)
 
-		switch pw.info.PkgNameOf(n).Imported().Path() {
+		impObj := pw.info.PkgNameOf(n)
+		impPath := impObj.Imported().Path()
+		// Record import alias mapping for this file (skip dot/blank).
+		if name := impObj.Name(); name != "." && name != "_" {
+			if c.file.aliases == nil {
+				c.file.aliases = make(map[string]string)
+			}
+			c.file.aliases[name] = impPath
+		}
+
+		switch impPath {
 		case "embed":
 			c.file.importedEmbed = true
 		case "unsafe":
@@ -2596,6 +2607,40 @@ func (c *declCollector) Visit(n syntax.Node) syntax.Visitor {
 
 		obj := pw.info.Defs[n.Name].(*types2.Func)
 		pw.funDecls[obj] = n
+
+		// Record decorators for this function/method by fully-qualified name.
+		if len(n.Decorators) > 0 {
+            if funcDecorators == nil {
+                funcDecorators = make(map[string]decoRec)
+            }
+			key := pw.curpkg.Path() + "." + n.Name.Value
+			// Distinguish methods by receiver type.
+			sig := obj.Type().(*types2.Signature)
+			if recv := sig.Recv(); recv != nil {
+				typ := types2.Unalias(recv.Type())
+				ptr := false
+				if p, ok := typ.(*types2.Pointer); ok {
+					ptr = true
+					typ = types2.Unalias(p.Elem())
+				}
+				if named, ok := typ.(*types2.Named); ok {
+					star := ""
+					if ptr {
+						star = "*"
+					}
+					key = pw.curpkg.Path() + ".(" + star + named.Obj().Name() + ")." + n.Name.Value
+				}
+			}
+            // Copy import aliases map for this file (if any) and store with exprs.
+            var aliases map[string]string
+            if c.file.aliases != nil {
+                aliases = make(map[string]string, len(c.file.aliases))
+                for k, v := range c.file.aliases {
+                    aliases[k] = v
+                }
+            }
+            funcDecorators[key] = decoRec{Exprs: append([]syntax.Expr(nil), n.Decorators...), Imports: aliases}
+		}
 
 		return c.withTParams(obj)
 

@@ -32,6 +32,10 @@ type parser struct {
 	fnest  int    // function nesting level (for error handling)
 	xnest  int    // expression nesting level (for complit ambiguity resolution)
 	indent []byte // tracing support
+
+	// pendingDecos holds decorator expressions parsed at top-level that
+	// must be attached to the next function declaration encountered.
+	pendingDecos []Expr
 }
 
 func (p *parser) init(file *PosBase, r io.Reader, errh ErrorHandler, pragh PragmaHandler, mode Mode) {
@@ -448,6 +452,32 @@ func (p *parser) fileOrNil() *File {
 		case _Func:
 			p.next()
 			if d := p.funcDeclOrNil(); d != nil {
+				// attach any pending decorators
+				d.Decorators = append([]Expr(nil), p.pendingDecos...)
+				p.pendingDecos = nil
+				f.DeclList = append(f.DeclList, d)
+			}
+
+		case _At:
+			// Parse one or more decorator lines, then expect a func decl.
+			for p.tok == _At {
+				p.next() // consume '@'
+				// Parse decorator expression; for now allow general expression.
+				dec := p.expr()
+				p.pendingDecos = append(p.pendingDecos, dec)
+				// decorators must be on their own line
+				p.want(_Semi)
+			}
+			if !p.got(_Func) {
+				p.syntaxError("decorator must be followed by func declaration")
+				p.pendingDecos = nil
+				p.advance(_Import, _Const, _Type, _Var, _Func)
+				continue
+			}
+			if d := p.funcDeclOrNil(); d != nil {
+				// attach collected decorators
+				d.Decorators = append([]Expr(nil), p.pendingDecos...)
+				p.pendingDecos = nil
 				f.DeclList = append(f.DeclList, d)
 			}
 

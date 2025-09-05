@@ -1,0 +1,24 @@
+# decorator factory must use compile-time-evaluable arguments
+
+! go build .
+stderr 'decorator argument is not compile-time evaluable'
+
+-- go.mod --
+module example.com/decorators_constargs
+
+go 1.23
+
+-- main.go --
+package main
+
+// D_factory returns a valid decorator but requires const-only args.
+func D_factory(n int) func(func(int) int) func(int) int {
+    _ = n // intentionally unused
+    return func(f func(int) int) func(int) int { return f }
+}
+
+func Carg() int { return 1 }
+
+@D_factory(Carg())
+func C(x int) int { return x }
+

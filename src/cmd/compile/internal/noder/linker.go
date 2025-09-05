@@ -8,6 +8,7 @@ import (
 	"internal/buildcfg"
 	"internal/pkgbits"
 	"io"
+    "strings"
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
@@ -217,12 +218,16 @@ func (l *linker) relocObj(pr *pkgReader, idx index) index {
 // type aliases, a method may be imported, but still available on a
 // locally declared type.)
 func (l *linker) exportBody(obj *ir.Name, local bool) {
-	assert(obj.Op() == ir.ONAME && obj.Class == ir.PFUNC)
+    assert(obj.Op() == ir.ONAME && obj.Class == ir.PFUNC)
 
-	fn := obj.Func
-	if fn.Inl == nil {
-		return // not inlinable anyway
-	}
+    fn := obj.Func
+    if fn.Inl == nil {
+        return // not inlinable anyway
+    }
+    // Do not export bodies for synthesized original functions from decorators.
+    if strings.Contains(obj.Sym().Name, "$orig") {
+        return
+    }
 
 	// As a simple heuristic, if the function was declared in this
 	// package or we inlined it somewhere in this package, then we'll
