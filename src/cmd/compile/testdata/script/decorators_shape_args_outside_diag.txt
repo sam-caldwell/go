@@ -1,0 +1,17 @@
+# diagnostics: args outside shape-lambda is undefined
+
+! go build .
+stderr 'undefined: args'
+
+-- go.mod --
+module example.com/decorators_shape_args_outside_diag
+
+go 1.23
+
+-- main.go --
+package main
+
+func F() {
+    _ = args // undefined outside shape-lambda
+}
+

@@ -1,0 +1,36 @@
+# shape-lambda: rets assignment and return rets with named results
+
+go run .
+stdout '^6$'
+
+-- go.mod --
+module example.com/decorators_shape_rets
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+// PlusOne wraps a unary int function and adds 1 using rets lowering.
+func PlusOne(next func(int) int) func(int) int {
+    return (func(x int) (r int) {
+        rets = next(args...)
+        return rets
+    }) as func(int) int
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "example.com/decorators_shape_rets/dec"
+)
+
+@dec.PlusOne
+func F(x int) int { return x * 5 }
+
+func main() {
+    fmt.Println(F(1)) // (1*5)+1 = 6
+}
+

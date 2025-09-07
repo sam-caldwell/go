@@ -1,0 +1,31 @@
+# variadics + shape-lambda specifics: generic decorator works on variadic functions
+
+go run .
+stdout '^10$'
+
+-- go.mod --
+module example.com/decorators_generic_variadics
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// Identity is a generic decorator that returns the original function unchanged.
+func Identity[S funcsig](next S) S { return next }
+
+@Identity
+func Sum(xs ...int) int {
+    s := 0
+    for _, v := range xs { s += v }
+    return s
+}
+
+func main() {
+    fmt.Println(Sum(1,2,3,4)) // 10
+}
+

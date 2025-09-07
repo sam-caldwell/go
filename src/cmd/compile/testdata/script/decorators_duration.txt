@@ -1,0 +1,42 @@
+# execution test: decorator factory with duration-typed constant args
+
+go run .
+stdout '\\[ok\\]'
+
+-- go.mod --
+module example.com/decorators_duration
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+import "time"
+
+// Tag returns a decorator that wraps the string result in brackets.
+// It accepts a time.Duration argument to exercise typed constant
+// expressions such as 50*time.Millisecond in decorator arguments.
+func Tag(d time.Duration) func(func(string) string) func(string) string {
+    // d is intentionally unused at runtime; presence verifies typing.
+    _ = d
+    return func(f func(string) string) func(string) string {
+        return func(s string) string { return "[" + f(s) + "]" }
+    }
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "time"
+    "example.com/decorators_duration/dec"
+)
+
+@dec.Tag(50*time.Millisecond)
+func G(s string) string { return s }
+
+func main() {
+    fmt.Println(G("ok"))
+}
+

@@ -1,0 +1,17 @@
+# diagnostics: rets outside shape-lambda is undefined
+
+! go build .
+stderr 'undefined: rets'
+
+-- go.mod --
+module example.com/decorators_shape_rets_outside_diag
+
+go 1.23
+
+-- main.go --
+package main
+
+func F() {
+    _ = rets // undefined outside shape-lambda
+}
+

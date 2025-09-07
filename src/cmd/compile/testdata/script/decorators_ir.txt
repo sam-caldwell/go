@@ -1,0 +1,38 @@
+# desugaring/IR test: ensure $orig symbol is synthesized and wrapper exists
+
+go build -o m.exe .
+go tool nm m.exe
+stdout 'main\.F$orig'
+stdout 'main\.F(\(|$)'
+
+# also sanity-check execution order bottom→top (closest applies first)
+go run .
+stdout '^14$'
+
+-- go.mod --
+module example.com/decorators_ir
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D adds 3 to the result of f.
+func D(f func(int) int) func(int) int { return func(x int) int { return f(x) + 3 } }
+
+// Twice doubles the result of f.
+func Twice(f func(int) int) func(int) int { return func(x int) int { return f(x) * 2 } }
+
+@Twice
+@D
+func F(x int) int { return x }
+
+func main() {
+    // Expect (4+3)*2 = 14 proving bottom→top application
+    fmt.Println(F(4))
+}
+

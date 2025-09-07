@@ -1,0 +1,56 @@
+# generics + variadics: use decorated functions in generic contexts
+
+go run .
+stdout '^11$'
+stdout '^10$'
+
+-- go.mod --
+module example.com/decorators_generics_variadics
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D increments the result of a unary int function.
+func D(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) + 1 }
+}
+
+// WrapVariadic forwards variadic args unchanged.
+func WrapVariadic() func(func(int, ...int) int) func(int, ...int) int {
+    return func(f func(int, ...int) int) func(int, ...int) int {
+        return func(a int, xs ...int) int { return f(a, xs...) }
+    }
+}
+
+@D
+func F(x int) int { return x * 2 }
+
+@WrapVariadic()
+func Sum(a int, xs ...int) int {
+    s := a
+    for _, v := range xs { s += v }
+    return s
+}
+
+// Apply applies fn to x in a generic context.
+func Apply[T ~int](fn func(T) T, x T) T { return fn(x) }
+
+// CallSum demonstrates forwarding variadic args from a generic function.
+func CallSum[T ~int](a T, xs ...T) T {
+    ints := make([]int, len(xs))
+    for i, v := range xs { ints[i] = int(v) }
+    r := Sum(int(a), ints...)
+    return T(r)
+}
+
+func main() {
+    fmt.Println(Apply[int](F, 5))            // (5*2)+1 = 11
+    fmt.Println(CallSum[int](1, 2, 3, 4))    // 1+2+3+4 = 10
+}
+

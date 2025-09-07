@@ -1918,9 +1918,17 @@ func (p *printer) distanceFrom(startPos token.Pos, startOutCol int) int {
 }
 
 func (p *printer) funcDecl(d *ast.FuncDecl) {
-	p.setComment(d.Doc)
-	p.setPos(d.Pos())
-	p.print(token.FUNC, blank)
+    p.setComment(d.Doc)
+    p.setPos(d.Pos())
+    // Print decorators, one per line, above the function decl if present.
+    if len(d.Decorators) > 0 {
+        for _, dec := range d.Decorators {
+            p.print(token.AT, blank)
+            p.expr(dec)
+            p.print(newline)
+        }
+    }
+    p.print(token.FUNC, blank)
 	// We have to save startCol only after emitting FUNC; otherwise it can be on a
 	// different line (all whitespace preceding the FUNC is emitted only when the
 	// FUNC is emitted).

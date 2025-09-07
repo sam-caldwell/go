@@ -1,0 +1,21 @@
+# diagnostics: args misuse
+
+! go build .
+stderr 'args may only be used as forwarding in calls'
+
+-- go.mod --
+module example.com/decorators_shape_args_diag
+
+go 1.23
+
+-- main.go --
+package main
+
+// Decorator misuses args in a non-call context; should error.
+func Bad(next func(int) int) func(int) int {
+    return (func(x int) int {
+        _ = args // invalid use
+        return next(x)
+    }) as func(int) int
+}
+

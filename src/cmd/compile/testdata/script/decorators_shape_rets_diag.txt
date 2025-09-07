@@ -1,0 +1,18 @@
+# diagnostics: rets requires named results
+
+! go build .
+stderr 'rets requires named result parameters'
+
+-- go.mod --
+module example.com/decorators_shape_rets_diag
+
+go 1.23
+
+-- main.go --
+package main
+
+// Decorator uses rets but literal has unnamed results; should error.
+func Bad(next func(int) int) func(int) int {
+    return (func(x int) int { rets = next(args...); return rets }) as func(int) int
+}
+

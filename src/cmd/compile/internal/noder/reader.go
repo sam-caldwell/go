@@ -1706,29 +1706,47 @@ func (r *reader) stmt1(tag codeStmt, out *ir.Nodes) ir.Node {
 	default:
 		panic("unexpected statement")
 
-	case stmtAssign:
-		pos := r.pos()
-		names, lhs := r.assignList()
-		rhs := r.multiExpr()
+case stmtAssign:
+    pos := r.pos()
+    shapeRets := r.Bool()
+    var names []*ir.Name
+    var lhs []ir.Node
+    if !shapeRets {
+        names, lhs = r.assignList()
+    }
+    rhs := r.multiExpr()
 
-		if len(rhs) == 0 {
-			for _, name := range names {
-				as := ir.NewAssignStmt(pos, name, nil)
-				as.PtrInit().Append(ir.NewDecl(pos, ir.ODCL, name))
-				out.Append(typecheck.Stmt(as))
-			}
-			return nil
-		}
+    if len(rhs) == 0 && !shapeRets {
+        for _, name := range names {
+            as := ir.NewAssignStmt(pos, name, nil)
+            as.PtrInit().Append(ir.NewDecl(pos, ir.ODCL, name))
+            out.Append(typecheck.Stmt(as))
+        }
+        return nil
+    }
+    if shapeRets {
+        // Build LHS from named result parameters in declaration order.
+        var outs []ir.Node
+        for _, n := range r.curfn.Dcl {
+            if n.Class == ir.PPARAMOUT {
+                outs = append(outs, n)
+            }
+        }
+        if len(outs) == 1 && len(rhs) == 1 {
+            return ir.NewAssignStmt(pos, outs[0], rhs[0])
+        }
+        return ir.NewAssignListStmt(pos, ir.OAS2, outs, rhs)
+    }
 
-		if len(lhs) == 1 && len(rhs) == 1 {
-			n := ir.NewAssignStmt(pos, lhs[0], rhs[0])
-			n.Def = r.initDefn(n, names)
-			return n
-		}
+    if len(lhs) == 1 && len(rhs) == 1 {
+        n := ir.NewAssignStmt(pos, lhs[0], rhs[0])
+        n.Def = r.initDefn(n, names)
+        return n
+    }
 
-		n := ir.NewAssignListStmt(pos, ir.OAS2, lhs, rhs)
-		n.Def = r.initDefn(n, names)
-		return n
+    n := ir.NewAssignListStmt(pos, ir.OAS2, lhs, rhs)
+    n.Def = r.initDefn(n, names)
+    return n
 
 	case stmtAssignOp:
 		op := r.op()
@@ -1782,10 +1800,14 @@ func (r *reader) stmt1(tag codeStmt, out *ir.Nodes) ir.Node {
 		sym := r.label()
 		return ir.NewLabelStmt(pos, sym)
 
-	case stmtReturn:
-		pos := r.pos()
-		results := r.multiExpr()
-		return ir.NewReturnStmt(pos, results)
+case stmtReturn:
+    pos := r.pos()
+    shapeRets := r.Bool()
+    if shapeRets {
+        return ir.NewReturnStmt(pos, nil)
+    }
+    results := r.multiExpr()
+    return ir.NewReturnStmt(pos, results)
 
 	case stmtSelect:
 		return r.selectStmt(label)
@@ -2366,7 +2388,7 @@ func (r *reader) expr() (res ir.Node) {
 		}
 		return x
 
-	case exprCall:
+case exprCall:
 		var fun ir.Node
 		var args ir.Nodes
 		if r.Bool() { // method call
@@ -2406,12 +2428,29 @@ func (r *reader) expr() (res ir.Node) {
 			fun = shapedFn
 			args.Append(dictPtr)
 		} else {
-			fun = r.expr()
-		}
-		pos := r.pos()
-		args.Append(r.multiExpr()...)
-		dots := r.Bool()
-		n := typecheck.Call(pos, fun, args, dots)
+        fun = r.expr()
+        }
+        pos := r.pos()
+        // Shape-lambda forwarding of next(args...): if encoded as such,
+        // expand to the current function's parameter list and pass variadic
+        // forwarding via dots accordingly.
+        shapeArgs := r.Bool()
+        var dots bool
+        if shapeArgs {
+            // Append all parameters from the current function in order.
+            for _, nparam := range r.curfn.Dcl {
+                if nparam.Class == ir.PPARAM && nparam.Sym().Name != dictParamName {
+                    args.Append(nparam)
+                }
+            }
+            dots = r.curfn.Type().IsVariadic()
+            // consume hasDots flag from stream but ignore
+            _ = r.Bool()
+        } else {
+            args.Append(r.multiExpr()...)
+            dots = r.Bool()
+        }
+        n := typecheck.Call(pos, fun, args, dots)
 		switch n.Op() {
 		case ir.OAPPEND:
 			n := n.(*ir.CallExpr)
@@ -3090,10 +3129,12 @@ func (r *reader) funcLit() ir.Node {
 	origPos := r.pos()
 	sig := r.signature(nil)
 	r.suppressInlPos--
-	why := ir.OCLOSURE
-	if r.Bool() {
-		why = ir.ORANGE
-	}
+    why := ir.OCLOSURE
+    if r.Bool() {
+        why = ir.ORANGE
+    }
+    // Shape-lambda flag (currently unused here; lowering occurs at call sites)
+    _ = r.Bool()
 
 	fn := r.inlClosureFunc(origPos, sig, why)
 
@@ -3109,7 +3150,7 @@ func (r *reader) funcLit() ir.Node {
 		ir.NewClosureVar(param.Pos(), fn, param)
 	}
 
-	r.addBody(fn, nil)
+    r.addBody(fn, nil)
 
 	return fn.OClosure
 }

@@ -69,6 +69,9 @@ type parser struct {
 
 	imports []*ast.ImportSpec // list of imports
 
+	// Decorators collected for the next function declaration.
+	pendingDecos []ast.Expr
+
 	// nestLev is used to track and limit the recursion depth
 	// during parsing.
 	nestLev int
@@ -2815,7 +2818,7 @@ func (p *parser) parseFuncDecl() *ast.FuncDecl {
 		p.expectSemi()
 	}
 
-	decl := &ast.FuncDecl{
+    decl := &ast.FuncDecl{
 		Doc:  doc,
 		Recv: recv,
 		Name: ident,
@@ -2827,6 +2830,11 @@ func (p *parser) parseFuncDecl() *ast.FuncDecl {
 		},
 		Body: body,
 	}
+    // Attach any pending decorators collected immediately above this func.
+    if len(p.pendingDecos) != 0 {
+        decl.Decorators = append([]ast.Expr(nil), p.pendingDecos...)
+        p.pendingDecos = nil
+    }
 	return decl
 }
 
@@ -2906,6 +2914,27 @@ func (p *parser) parseFile() *ast.File {
 					p.error(p.pos, "imports must appear before other declarations")
 				}
 				prev = p.tok
+
+				if p.tok == token.AT {
+					// Parse one or more decorator lines and expect a following func decl.
+					for p.tok == token.AT {
+						p.next()
+						// Parse decorator expression; allow general expression.
+						dec := p.parseExpr()
+						p.pendingDecos = append(p.pendingDecos, dec)
+						// decorators must be on their own line
+						p.expectSemi()
+					}
+					if p.tok != token.FUNC {
+						p.error(p.pos, "decorator must be followed by func declaration")
+						p.pendingDecos = nil
+						// Try to recover to next declaration start
+						p.advance(declStart)
+						continue
+					}
+					decls = append(decls, p.parseFuncDecl())
+					continue
+				}
 
 				decls = append(decls, p.parseDecl(declStart))
 			}

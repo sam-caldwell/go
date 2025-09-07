@@ -10,6 +10,7 @@ import (
 	"flag"
 
 	"golang.org/x/tools/go/analysis/unitchecker"
+	"cmd/vet/decorators"
 
 	"golang.org/x/tools/go/analysis/passes/appends"
 	"golang.org/x/tools/go/analysis/passes/asmdecl"
@@ -54,6 +55,7 @@ func main() {
 
 	counter.Inc("vet/invocations")
 	unitchecker.Main(
+		decorators.Analyzer,
 		appends.Analyzer,
 		asmdecl.Analyzer,
 		assign.Analyzer,

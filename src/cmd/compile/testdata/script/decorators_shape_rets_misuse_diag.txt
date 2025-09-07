@@ -1,0 +1,21 @@
+# diagnostics: rets misuse in expression
+
+! go build .
+stderr 'rets may only be used in return or assignment to named results'
+
+-- go.mod --
+module example.com/decorators_shape_rets_misuse_diag
+
+go 1.23
+
+-- main.go --
+package main
+
+// Decorator misuses rets as an expression; should error.
+func Bad(next func(int) int) func(int) int {
+    return (func(x int) (r int) {
+        _ = rets
+        return next(x)
+    }) as func(int) int
+}
+

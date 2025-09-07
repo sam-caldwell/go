@@ -472,6 +472,29 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		}
 
 	case *syntax.AssignStmt:
+		// Shape-lambda: allow "rets = ..." without full assignment checks.
+        if check.shapeLambdaActive() {
+            lhs := syntax.UnpackListExpr(s.Lhs)
+            if len(lhs) == 1 {
+                if nm, ok := syntax.Unparen(lhs[0]).(*syntax.Name); ok && nm.Value == "rets" {
+                    // Enforce named results requirement.
+                    res := check.sig.results
+                    if res.Len() == 0 || res.vars[0].name == "" {
+                        check.error(s, InvalidOp, "rets requires named result parameters")
+                        return
+                    }
+                    for i := 0; i < res.Len(); i++ {
+                        if res.vars[i].name == "" {
+                            check.error(s, InvalidOp, "rets requires named result parameters")
+                            return
+                        }
+                    }
+                    // Evaluate RHS expressions for side effects/types, but do not enforce assignment typing.
+                    _ = check.exprList(syntax.UnpackListExpr(s.Rhs))
+                    return
+                }
+            }
+        }
 		if s.Rhs == nil {
 			// x++ or x--
 			// (no need to call unpackExpr as s.Lhs must be single-valued)
@@ -521,6 +544,23 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		// Return with implicit results allowed for function with named results.
 		// (If one is named, all are named.)
 		results := syntax.UnpackListExpr(s.Results)
+		// Shape-lambda: allow "return rets" without full typing checks.
+        if check.shapeLambdaActive() && len(results) == 1 {
+            if nm, ok := syntax.Unparen(results[0]).(*syntax.Name); ok && nm.Value == "rets" {
+                // Enforce named results requirement.
+                if res.Len() == 0 || res.vars[0].name == "" {
+                    check.error(s, InvalidOp, "rets requires named result parameters")
+                    return
+                }
+                for i := 0; i < res.Len(); i++ {
+                    if res.vars[i].name == "" {
+                        check.error(s, InvalidOp, "rets requires named result parameters")
+                        return
+                    }
+                }
+                return
+            }
+        }
 		if len(results) == 0 && res.Len() > 0 && res.vars[0].name != "" {
 			// spec: "Implementation restriction: A compiler may disallow an empty expression
 			// list in a "return" statement if a different entity (constant, type, or variable)

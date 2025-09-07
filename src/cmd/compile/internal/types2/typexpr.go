@@ -19,10 +19,31 @@ import (
 // For the meaning of def, see Checker.definedType, below.
 // If wantType is set, the identifier e is expected to denote a type.
 func (check *Checker) ident(x *operand, e *syntax.Name, def *TypeName, wantType bool) {
-	x.mode = invalid
-	x.expr = e
+    x.mode = invalid
+    x.expr = e
 
-	scope, obj := check.lookupScope(e.Value)
+    // Shape-lambda reserved identifiers.
+    if check.shapeLambdaActive() {
+        switch e.Value {
+        case "args":
+            // Only allowed as the sole forwarding argument in a call; arguments()
+            // detects and handles that case without type-checking the arg.
+            check.error(e, InvalidOp, "args may only be used as forwarding in calls")
+            x.mode = invalid
+            x.typ = Typ[Invalid]
+            check.record(x)
+            return
+        case "rets":
+            // Only allowed as entire return value or LHS of assignment; stmt.go handles.
+            check.error(e, InvalidOp, "rets may only be used in return or assignment to named results")
+            x.mode = invalid
+            x.typ = Typ[Invalid]
+            check.record(x)
+            return
+        }
+    }
+
+    scope, obj := check.lookupScope(e.Value)
 	switch obj {
 	case nil:
 		if e.Value == "_" {

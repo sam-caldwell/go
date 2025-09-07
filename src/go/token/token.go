@@ -128,6 +128,7 @@ const (
 	additional_beg
 	// additional tokens, handled in an ad-hoc manner
 	TILDE
+	AT // '@'
 	additional_end
 )
 
@@ -231,6 +232,7 @@ var tokens = [...]string{
 	VAR:    "var",
 
 	TILDE: "~",
+	AT:    "@",
 }
 
 // String returns the string corresponding to the token tok.
@@ -305,7 +307,7 @@ func (tok Token) IsLiteral() bool { return literal_beg < tok && tok < literal_en
 // IsOperator returns true for tokens corresponding to operators and
 // delimiters; it returns false otherwise.
 func (tok Token) IsOperator() bool {
-	return (operator_beg < tok && tok < operator_end) || tok == TILDE
+	return (operator_beg < tok && tok < operator_end) || tok == TILDE || tok == AT
 }
 
 // IsKeyword returns true for tokens corresponding to keywords;

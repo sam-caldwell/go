@@ -1,0 +1,42 @@
+# method values: decorated methods should produce decorated function values
+
+go run .
+stdout '^5$'
+stdout '^7$'
+
+-- go.mod --
+module example.com/decorators_method_values
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D increments the result of a unary int function.
+func D(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) + 1 }
+}
+
+type T struct{}
+
+@D
+func (t T) M(x int) int { return x }
+
+@D
+func (t *T) P(x int) int { return x * 3 }
+
+func main() {
+    var t T
+    // Method value from value receiver method uses decorated wrapper.
+    mv := t.M
+    fmt.Println(mv(4)) // (4)+1 = 5
+
+    // Method value from pointer receiver method uses decorated wrapper.
+    mp := (&t).P
+    fmt.Println(mp(2)) // (2*3)+1 = 7
+}
+

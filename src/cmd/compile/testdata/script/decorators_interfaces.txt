@@ -1,0 +1,58 @@
+# methods + interfaces: decorated methods preserve interface conformance
+
+go run .
+stdout '^5$'
+stdout '^5$'
+stdout '^9$'
+
+-- go.mod --
+module example.com/decorators_interfaces
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D increments the result of a unary int method/function.
+func D(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) + 1 }
+}
+
+type I1 interface { M(int) int }
+type I2 interface { P(int) int }
+
+type A struct{}
+
+// Value-receiver method; both A and *A should satisfy I1 after decoration.
+@D
+func (A) M(x int) int { return x * 2 }
+
+type B struct{}
+
+// Pointer-receiver method; only *B should satisfy I2 after decoration.
+@D
+func (*B) P(x int) int { return x * 4 }
+
+func main() {
+    // Static interface conformance checks.
+    var _ I1 = A{}
+    var _ I1 = &A{}
+    var _ I2 = &B{}
+
+    // Dynamic behavior checks to ensure wrappers forward correctly.
+    var a A
+    var i1 I1 = a
+    fmt.Println(i1.M(2)) // (2*2)+1 = 5
+
+    var ap *A = &a
+    var i1p I1 = ap
+    fmt.Println(i1p.M(2)) // (2*2)+1 = 5
+
+    var b B
+    var i2 I2 = &b
+    fmt.Println(i2.P(2)) // (2*4)+1 = 9
+}

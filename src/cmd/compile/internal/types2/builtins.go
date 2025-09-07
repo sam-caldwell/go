@@ -949,6 +949,87 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 		}
 		// trace is only available in test mode - no need to record signature
 
+	case _Origof:
+		// origof(fn) returns the original (pre-decoration) function/method value.
+		// Type-check: exactly 1 argument with function signature; result is same type.
+		if nargs != 1 {
+			check.errorf(call, WrongArgCount, invalidOp+"%s arguments for %v (expected 1, found %d)",
+				"wrong number of", call, nargs)
+			return
+		}
+		if _, ok := under(x.typ).(*Signature); !ok {
+			check.errorf(x, InvalidOp, invalidOp+"argument to built-in %s must be a function or method; got %s",
+				predeclaredFuncs[id].name, x.typ)
+			return
+		}
+		// Gate: only allowed for functions/methods declared in the same package.
+		allowed := false
+		switch a := syntax.Unparen(call.ArgList[0]).(type) {
+		case *syntax.Name:
+			if obj, ok := check.info.Uses[a]; ok {
+				if fn, ok := obj.(*Func); ok && fn.Pkg() == check.pkg {
+					allowed = true
+				}
+			}
+		case *syntax.SelectorExpr:
+			// Method expr/value or pkg.Func
+			if sel, ok := check.info.Selections[a]; ok {
+				if fn, ok := sel.Obj().(*Func); ok && fn.Pkg() == check.pkg {
+					allowed = true
+				}
+			} else {
+				// pkg.Func
+				if _, ok := check.info.Uses[a.X].(*PkgName); ok {
+					if fn, ok := check.info.Uses[a.Sel].(*Func); ok && fn.Pkg() == check.pkg {
+						allowed = true
+					}
+				}
+			}
+		}
+		if !allowed {
+			check.errorf(call, InvalidOp, invalidOp+"origof target must be declared in the same package")
+			return
+		}
+		// Result type is same as input.
+		x.mode = value
+		// x.typ unchanged
+		if check.recordTypes() {
+			check.recordBuiltinType(call.Fun, makeSig(x.typ))
+		}
+
+	case _Compose:
+		// compose(d1, d2, ..., dn) statically composes decorators for a given signature S.
+		// Each argument must be a function of type func(S) S for the same S.
+		if nargs < 1 {
+			check.errorf(call, WrongArgCount, invalidOp+"%s arguments for %v (expected at least 1, found 0)",
+				"not enough", call)
+			return
+		}
+		first := args[0]
+		fsig, ok := under(first.typ).(*Signature)
+		if !ok || fsig.Params().Len() != 1 || fsig.Results().Len() != 1 || !Identical(fsig.Params().At(0).Type(), fsig.Results().At(0).Type()) {
+			check.errorf(first, InvalidOp, invalidOp+"argument 1 to built-in %s must be of type func(S) S; got %s",
+				predeclaredFuncs[id].name, first.typ)
+			return
+		}
+		S := fsig.Params().At(0).Type()
+		for i := 1; i < nargs; i++ {
+			ai := args[i]
+			sig, ok := under(ai.typ).(*Signature)
+			if !ok || sig.Params().Len() != 1 || sig.Results().Len() != 1 || !Identical(sig.Params().At(0).Type(), S) || !Identical(sig.Results().At(0).Type(), S) {
+				check.errorf(ai, InvalidOp, invalidOp+"argument %d to built-in %s must be of type func(%s) %s; got %s",
+					i+1, predeclaredFuncs[id].name, S, S, ai.typ)
+				return
+			}
+		}
+		// Result type is a function of type func(S) S (same as first arg type).
+		x.mode = value
+		x.typ = fsig
+		if check.recordTypes() {
+			check.recordBuiltinType(call.Fun, makeSig(fsig))
+		}
+		return
+
 	default:
 		panic("unreachable")
 	}

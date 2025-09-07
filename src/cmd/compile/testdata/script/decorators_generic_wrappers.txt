@@ -1,0 +1,36 @@
+# decorated generic functions: wrappers mirror type params and constraints
+
+go run .
+stdout '^11$'
+stdout '^6$'
+
+-- go.mod --
+module example.com/decorators_generic_wrappers
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// Identity is a generic decorator over any function signature S.
+func Identity[S funcsig](next S) S { return next }
+
+// Constrained generic function: T must have underlying int.
+@Identity
+func AddOne[T ~int](x T) T { return x + 1 }
+
+type T struct{}
+
+// Constrained method via receiver-lift: U must have underlying int.
+@Identity
+func (T) TimesTwo[U ~int](x U) U { return x * 2 }
+
+func main() {
+    fmt.Println(AddOne[int](10)) // 11
+    var t T
+    fmt.Println(t.TimesTwo[int](3)) // 6
+}

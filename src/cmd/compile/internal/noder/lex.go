@@ -22,20 +22,21 @@ func isQuoted(s string) bool {
 }
 
 const (
-	funcPragmas = ir.Nointerface |
-		ir.Noescape |
-		ir.Norace |
-		ir.Nosplit |
-		ir.Noinline |
-		ir.NoCheckPtr |
-		ir.RegisterParams | // TODO(register args) remove after register abi is working
-		ir.CgoUnsafeArgs |
-		ir.UintptrKeepAlive |
-		ir.UintptrEscapes |
-		ir.Systemstack |
-		ir.Nowritebarrier |
-		ir.Nowritebarrierrec |
-		ir.Yeswritebarrierrec
+    funcPragmas = ir.Nointerface |
+        ir.Noescape |
+        ir.Norace |
+        ir.Nosplit |
+        ir.Noinline |
+        ir.NoCheckPtr |
+        ir.RegisterParams | // TODO(register args) remove after register abi is working
+        ir.CgoUnsafeArgs |
+        ir.UintptrKeepAlive |
+        ir.UintptrEscapes |
+        ir.NoDecorate |
+        ir.Systemstack |
+        ir.Nowritebarrier |
+        ir.Nowritebarrierrec |
+        ir.Yeswritebarrierrec
 )
 
 func pragmaFlag(verb string) ir.PragmaFlag {
@@ -68,15 +69,18 @@ func pragmaFlag(verb string) ir.PragmaFlag {
 		return ir.CgoUnsafeArgs | ir.NoCheckPtr // implies NoCheckPtr (see #34968)
 	case "go:uintptrkeepalive":
 		return ir.UintptrKeepAlive
-	case "go:uintptrescapes":
-		// This directive extends //go:uintptrkeepalive by forcing
-		// uintptr arguments to escape to the heap, which makes stack
-		// growth safe.
-		return ir.UintptrEscapes | ir.UintptrKeepAlive // implies UintptrKeepAlive
-	case "go:registerparams": // TODO(register args) remove after register abi is working
-		return ir.RegisterParams
-	}
-	return 0
+    case "go:uintptrescapes":
+        // This directive extends //go:uintptrkeepalive by forcing
+        // uintptr arguments to escape to the heap, which makes stack
+        // growth safe.
+        return ir.UintptrEscapes | ir.UintptrKeepAlive // implies UintptrKeepAlive
+    case "go:nodecorate":
+        // Disable decorator processing on this function.
+        return ir.NoDecorate
+    case "go:registerparams": // TODO(register args) remove after register abi is working
+        return ir.RegisterParams
+    }
+    return 0
 }
 
 // pragcgo is called concurrently if files are parsed concurrently.

@@ -1,0 +1,32 @@
+# disallow decorating functions implemented in assembly
+
+! go build .
+stderr 'cannot decorate assembly or cgo-declared function'
+
+-- go.mod --
+module example.com/decorators_disallowed_asm
+
+go 1.23
+
+-- dec.go --
+package main
+
+// Simple signature-preserving decorator.
+func D(f func() int) func() int { return f }
+
+-- asmdecl.go --
+package main
+
+@D
+func Asm() int
+
+-- asm_amd64.s --
+TEXT ·Asm(SB), $0-8
+    MOVQ $1, AX
+    RET
+
+-- asm_arm64.s --
+TEXT ·Asm(SB), $0-8
+    MOVD $1, R0
+    RET
+

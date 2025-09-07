@@ -191,9 +191,12 @@ type writer struct {
 
 	dict *writerDict
 
-	// derived tracks whether the type being written out references any
-	// type parameters. It's unused for writing non-type things.
-	derived bool
+    // derived tracks whether the type being written out references any
+    // type parameters. It's unused for writing non-type things.
+    derived bool
+
+    // inShapeLambda counts nesting of shape-lambda func literal bodies.
+    inShapeLambda int
 }
 
 // A writerDict tracks types and objects that are used by a declaration.
@@ -234,6 +237,73 @@ func (dict *writerDict) typeParamIndex(typ *types2.TypeParam) int {
 	}
 
 	return len(dict.implicits) + typ.Index()
+}
+
+// enforceDecoratorTyping checks that each decorator expression attached to
+// the given function/method has type func(S) S (possibly via the predeclared
+// generic alias Decorator[S]), where S is the (receiver-lifted) signature of
+// the decorated declaration. Diagnostics are reported at the decorator expr.
+func (pw *pkgWriter) enforceDecoratorTyping(fn *syntax.FuncDecl, sig *types2.Signature) {
+    // Compute receiver-lifted signature S: methods are viewed as funcs with
+    // receiver as the first parameter; functions are unchanged.
+    S := sig
+    if recv := sig.Recv(); recv != nil {
+        // Build parameter list with receiver first.
+        npars := sig.Params().Len()
+        vars := make([]*types2.Var, 0, npars+1)
+        // Param for receiver type.
+        rv := types2.NewParam(0, nil, "", recv.Type())
+        vars = append(vars, rv)
+        for i := 0; i < npars; i++ {
+            p := sig.Params().At(i)
+            v := types2.NewParam(0, nil, p.Name(), p.Type())
+            vars = append(vars, v)
+        }
+        params := types2.NewTuple(vars...)
+        // Results can be reused directly.
+        results := sig.Results()
+        // Variadic preserved from original.
+        S = types2.NewSignatureType(nil, nil, nil, params, results, sig.Variadic())
+    }
+
+    // Helper: format a type for messages.
+    qf := func(p *types2.Package) string { return p.Path() }
+
+    // Verify each decorator expression.
+    for _, dec := range fn.Decorators {
+        // Try to retrieve a typed type for this expression from types2 Info.
+        tv, ok := pw.maybeTypeAndValue(dec)
+        if !ok || tv.Type == nil {
+            // If we don't have types2 info (e.g., not recorded), skip here; IR pass will still check.
+            continue
+        }
+
+        // Unalias (Decorator[S] is an alias to func(S) S in our universe) then check for signature.
+        t := types2.Unalias(tv.Type)
+        sigDec, ok := t.(*types2.Signature)
+        if !ok {
+            pw.errorf(dec, "decorator does not produce a function; got %s", types2.TypeString(tv.Type, qf))
+            continue
+        }
+        // must be func(S) S
+        if sigDec.Params().Len() != 1 || sigDec.Results().Len() != 1 {
+            pw.errorf(dec, "decorator must have type func(%s) %s; got %s", types2.TypeString(S, qf), types2.TypeString(S, qf), types2.TypeString(sigDec, qf))
+            continue
+        }
+        p0 := sigDec.Params().At(0).Type()
+        r0 := sigDec.Results().At(0).Type()
+        // Allow generic decorator shape: func(S) S where S is a (single) type parameter.
+        if tp, ok1 := p0.(*types2.TypeParam); ok1 {
+            if tr, ok2 := r0.(*types2.TypeParam); ok2 && tp == tr {
+                // Defer exact matching to IR-stage where S is known via argument.
+                continue
+            }
+        }
+        if !types2.Identical(p0, S) || !types2.Identical(r0, S) {
+            pw.errorf(dec, "decorator type mismatch: expected func(%s) %s; got %s", types2.TypeString(S, qf), types2.TypeString(S, qf), types2.TypeString(sigDec, qf))
+            continue
+        }
+    }
 }
 
 // A derivedInfo represents a reference to an encoded generic Go type.
@@ -1103,7 +1173,7 @@ func (w *writer) funcExt(obj *types2.Func) {
 	}
 
 	sig, block := obj.Type().(*types2.Signature), decl.Body
-	body, closureVars := w.p.bodyIdx(sig, block, w.dict)
+    body, closureVars := w.p.bodyIdx(sig, block, w.dict, false)
 	if len(closureVars) > 0 {
 		fmt.Fprintln(os.Stderr, "CLOSURE", closureVars)
 	}
@@ -1166,10 +1236,15 @@ func (w *writer) pragmaFlag(p ir.PragmaFlag) {
 
 // bodyIdx returns the index for the given function body (specified by
 // block), adding it to the export data
-func (pw *pkgWriter) bodyIdx(sig *types2.Signature, block *syntax.BlockStmt, dict *writerDict) (idx index, closureVars []posVar) {
-	w := pw.newWriter(pkgbits.SectionBody, pkgbits.SyncFuncBody)
-	w.sig = sig
-	w.dict = dict
+func (pw *pkgWriter) bodyIdx(sig *types2.Signature, block *syntax.BlockStmt, dict *writerDict, shape bool) (idx index, closureVars []posVar) {
+    w := pw.newWriter(pkgbits.SectionBody, pkgbits.SyncFuncBody)
+    w.sig = sig
+    w.dict = dict
+
+    if shape {
+        w.inShapeLambda++
+        defer func() { w.inShapeLambda-- }()
+    }
 
 	w.declareParams(sig)
 	if w.Bool(block != nil) {
@@ -1375,15 +1450,27 @@ func (w *writer) stmt1(stmt syntax.Stmt) {
 		w.label(stmt.Label)
 		w.stmt1(stmt.Stmt)
 
-	case *syntax.ReturnStmt:
-		w.Code(stmtReturn)
-		w.pos(stmt)
-
-		resultTypes := w.sig.Results()
-		dstType := func(i int) types2.Type {
-			return resultTypes.At(i).Type()
-		}
-		w.multiExpr(stmt, dstType, syntax.UnpackListExpr(stmt.Results))
+case *syntax.ReturnStmt:
+    w.Code(stmtReturn)
+    w.pos(stmt)
+    // Shape-lambda: "return rets" -> encode shape flag and no explicit results.
+    shapeRets := false
+    if w.inShapeLambda > 0 {
+        rl := syntax.UnpackListExpr(stmt.Results)
+        if len(rl) == 1 {
+            if nm, ok := syntax.Unparen(rl[0]).(*syntax.Name); ok && nm.Value == "rets" {
+                shapeRets = true
+            }
+        }
+    }
+    w.Bool(shapeRets)
+    if !shapeRets {
+        resultTypes := w.sig.Results()
+        dstType := func(i int) types2.Type {
+            return resultTypes.At(i).Type()
+        }
+        w.multiExpr(stmt, dstType, syntax.UnpackListExpr(stmt.Results))
+    }
 
 	case *syntax.SelectStmt:
 		w.Code(stmtSelect)
@@ -1457,14 +1544,24 @@ func (w *writer) assignStmt(pos poser, lhs0, rhs0 syntax.Expr) {
 	lhs := syntax.UnpackListExpr(lhs0)
 	rhs := syntax.UnpackListExpr(rhs0)
 
-	w.Code(stmtAssign)
-	w.pos(pos)
+    w.Code(stmtAssign)
+    w.pos(pos)
 
-	// As if w.assignList(lhs0).
-	w.Len(len(lhs))
-	for _, expr := range lhs {
-		w.assign(expr)
-	}
+    // Shape-lambda: "rets = ..." encoding shortcut.
+    shapeRets := false
+    if w.inShapeLambda > 0 && len(lhs) == 1 {
+        if nm, ok := syntax.Unparen(lhs[0]).(*syntax.Name); ok && nm.Value == "rets" {
+            shapeRets = true
+        }
+    }
+    w.Bool(shapeRets)
+    if !shapeRets {
+        // As if w.assignList(lhs0).
+        w.Len(len(lhs))
+        for _, expr := range lhs {
+            w.assign(expr)
+        }
+    }
 
 	dstType := func(i int) types2.Type {
 		dst := lhs[i]
@@ -1487,7 +1584,7 @@ func (w *writer) assignStmt(pos poser, lhs0, rhs0 syntax.Expr) {
 		return w.p.typeOf(dst)
 	}
 
-	w.multiExpr(pos, dstType, rhs)
+    w.multiExpr(pos, dstType, rhs)
 }
 
 func (w *writer) blockStmt(stmt *syntax.BlockStmt) {
@@ -2121,22 +2218,35 @@ func (w *writer) expr(expr syntax.Expr) {
 		sigType := types2.CoreType(tv.Type).(*types2.Signature)
 		paramTypes := sigType.Params()
 
-		w.Code(exprCall)
-		writeFunExpr()
-		w.pos(expr)
+        w.Code(exprCall)
+        writeFunExpr()
+        w.pos(expr)
 
-		paramType := func(i int) types2.Type {
-			if sigType.Variadic() && !expr.HasDots && i >= paramTypes.Len()-1 {
-				return paramTypes.At(paramTypes.Len() - 1).Type().(*types2.Slice).Elem()
-			}
-			return paramTypes.At(i).Type()
-		}
+        // Shape-lambda forwarding: detect next(args...). When present, omit
+        // serializing argument expressions and let the reader expand to the
+        // current function's parameters.
+        shapeArgs := false
+        if w.inShapeLambda > 0 && len(expr.ArgList) == 1 {
+            if nm, ok := syntax.Unparen(expr.ArgList[0]).(*syntax.Name); ok && nm.Value == "args" {
+                shapeArgs = true
+            }
+        }
 
-		w.multiExpr(expr, paramType, expr.ArgList)
-		w.Bool(expr.HasDots)
-		if rtype != nil {
-			w.rtype(rtype)
-		}
+        paramType := func(i int) types2.Type {
+            if sigType.Variadic() && !expr.HasDots && i >= paramTypes.Len()-1 {
+                return paramTypes.At(paramTypes.Len() - 1).Type().(*types2.Slice).Elem()
+            }
+            return paramTypes.At(i).Type()
+        }
+
+        w.Bool(shapeArgs)
+        if !shapeArgs {
+            w.multiExpr(expr, paramType, expr.ArgList)
+        }
+        w.Bool(expr.HasDots)
+        if rtype != nil {
+            w.rtype(rtype)
+        }
 	}
 }
 
@@ -2383,14 +2493,21 @@ func (w *writer) compLit(lit *syntax.CompositeLit) {
 }
 
 func (w *writer) funcLit(expr *syntax.FuncLit) {
-	sig := w.p.typeOf(expr).(*types2.Signature)
+    sig := w.p.typeOf(expr).(*types2.Signature)
 
-	body, closureVars := w.p.bodyIdx(sig, expr.Body, w.dict)
+    // Mark shape-lambda func literals for downstream lowering.
+    shape := false
+    if w.p.info != nil && w.p.info.ShapeLambdas != nil {
+        shape = w.p.info.ShapeLambdas[expr]
+    }
+
+    body, closureVars := w.p.bodyIdx(sig, expr.Body, w.dict, shape)
 
 	w.Sync(pkgbits.SyncFuncLit)
 	w.pos(expr)
 	w.signature(sig)
-	w.Bool(w.p.rangeFuncBodyClosures[expr])
+    w.Bool(w.p.rangeFuncBodyClosures[expr])
+    w.Bool(shape)
 
 	w.Len(len(closureVars))
 	for _, cv := range closureVars {
@@ -2639,7 +2756,15 @@ func (c *declCollector) Visit(n syntax.Node) syntax.Visitor {
                     aliases[k] = v
                 }
             }
-            funcDecorators[key] = decoRec{Exprs: append([]syntax.Expr(nil), n.Decorators...), Imports: aliases}
+            // Capture XPos for each decorator for precise diagnostics later.
+            dpos := make([]src.XPos, len(n.Decorators))
+            for i, de := range n.Decorators {
+                dpos[i] = pw.m.pos(de.Pos())
+            }
+            funcDecorators[key] = decoRec{Exprs: append([]syntax.Expr(nil), n.Decorators...), Imports: aliases, Pos: dpos}
+
+			// Enforce signature-preserving decorator typing at the decoration site
+			pw.enforceDecoratorTyping(n, sig)
 		}
 
 		return c.withTParams(obj)

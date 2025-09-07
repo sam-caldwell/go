@@ -1,7 +1,7 @@
 # decorators must not target init
 
 ! go build .
-stderr 'invalid decorator target: init'
+stderr 'invalid decorator target: init cannot be decorated'
 
 -- go.mod --
 module example.com/decorators_disallowed_init

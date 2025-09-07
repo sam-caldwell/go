@@ -458,7 +458,7 @@ func (check *Checker) genericExprList(elist []syntax.Expr) (resList []*operand, 
 // The result signature is the (possibly adjusted and instantiated) function signature.
 // If an error occurred, the result signature is the incoming sig.
 func (check *Checker) arguments(call *syntax.CallExpr, sig *Signature, targs []Type, xlist []syntax.Expr, args []*operand, atargs [][]Type) (rsig *Signature) {
-	rsig = sig
+    rsig = sig
 
 	// Function call argument/parameter count requirements
 	//
@@ -469,9 +469,19 @@ func (check *Checker) arguments(call *syntax.CallExpr, sig *Signature, targs []T
 	// variadic func | nargs >= npars-1 | nargs == npars |
 	// --------------+------------------+----------------+
 
-	nargs := len(args)
-	npars := sig.params.Len()
-	ddd := hasDots(call)
+    nargs := len(args)
+    npars := sig.params.Len()
+    ddd := hasDots(call)
+
+    // Shape-lambda affordance: allow forwarding with next(args...) by bypassing
+    // strict argument checking; lowering will expand to explicit parameters.
+    if check.shapeLambdaActive() {
+        if len(call.ArgList) == 1 {
+            if nm, ok := syntax.Unparen(call.ArgList[0]).(*syntax.Name); ok && nm.Value == "args" {
+                return sig
+            }
+        }
+    }
 
 	// set up parameters
 	sigParams := sig.params // adjusted for variadic functions (may be nil for empty parameter lists!)

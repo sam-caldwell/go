@@ -1,0 +1,35 @@
+# generic decorators: D[S funcsig] should work via type inference
+
+go run .
+stdout '^5$'
+stdout '^6$'
+
+-- go.mod --
+module example.com/decorators_generic_decorator
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// Identity is a generic decorator that returns the original function unchanged.
+func Identity[S funcsig](next S) S { return next }
+
+@Identity
+func F(x int) int { return x + 1 }
+
+type T struct{}
+
+@Identity
+func (t T) M(x int) int { return x * 3 }
+
+func main() {
+    fmt.Println(F(4)) // 5
+    var t T
+    fmt.Println(t.M(2)) // 6
+}
+

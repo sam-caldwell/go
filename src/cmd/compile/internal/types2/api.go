@@ -310,14 +310,20 @@ type Info struct {
 	// initialization dependency appear in topological order, the others appear
 	// in source order. Variables without an initialization expression do not
 	// appear in this list.
-	InitOrder []*Initializer
+    InitOrder []*Initializer
 
-	// FileVersions maps a file to its Go version string.
+    // FileVersions maps a file to its Go version string.
 	// If the file doesn't specify a version, the reported
 	// string is Config.GoVersion.
 	// Version strings begin with “go”, like “go1.21”, and
 	// are suitable for use with the [go/version] package.
-	FileVersions map[*syntax.PosBase]string
+    FileVersions map[*syntax.PosBase]string
+
+    // ShapeLambdas records func literals that are stamped via the shape-lambda
+    // affordance (i.e., parsed as a FuncLit followed by "as T" and accepted
+    // by the checker). This data is used by later compiler stages to perform
+    // lowering of shape-lambda conveniences such as args/rets.
+    ShapeLambdas map[*syntax.FuncLit]bool
 }
 
 func (info *Info) recordTypes() bool {

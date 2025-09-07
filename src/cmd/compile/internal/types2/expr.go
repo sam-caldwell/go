@@ -1099,6 +1099,79 @@ func (check *Checker) exprInternal(T *target, x *operand, e syntax.Expr, hint Ty
 		}
 
 	case *syntax.AssertExpr:
+		// Special-case: affordance for decorator shape-lambdas.
+		// If we see a type assertion of a function literal to a function type
+		// (or to a type parameter constrained by funcsig), interpret it as a
+		// shape cast rather than a standard interface assertion. This enables
+		// the pattern: (func(...) {...}).(S) where S is a function signature
+		// or a type parameter with func constraints.
+        if flit, ok := e.X.(*syntax.FuncLit); ok && e.Type != nil {
+            // Type of the target.
+            T := check.varType(e.Type)
+            if !isValid(T) {
+                goto Error
+            }
+            // Accept if target is a function signature, or a type parameter with
+            // an interface constraint (funcsig modeled as top type set).
+            if tsig, ok := under(T).(*Signature); ok || isTypeParam(T) {
+                // Type-check the function literal as usual to catch basic errors.
+                var lit operand
+                check.funcLit(&lit, flit)
+                if lit.mode == invalid {
+                    goto Error
+                }
+                // If target is a concrete function signature, require exact shape match
+                // (including variadic flag, parameter and result lists), to keep
+                // shape-lambda stamping safe until full templating is available.
+                if tsig != nil {
+                    lsig, _ := under(lit.typ).(*Signature)
+                    if lsig == nil {
+                        check.errorf(e, InvalidAssert, invalidOp+"invalid shape-lambda: function literal is not a function type")
+                        goto Error
+                    }
+                    // Compare variadic flag, param and result cardinality and types.
+                    if lsig.Variadic() != tsig.Variadic() ||
+                        lsig.Params().Len() != tsig.Params().Len() ||
+                        lsig.Results().Len() != tsig.Results().Len() {
+                        check.errorf(e, InvalidAssert, invalidOp+"invalid shape-lambda: literal does not match target signature %s", tsig)
+                        goto Error
+                    }
+                    // Compare params
+                    for i := 0; i < lsig.Params().Len(); i++ {
+                        if !Identical(lsig.Params().At(i).Type(), tsig.Params().At(i).Type()) {
+                            check.errorf(e, InvalidAssert, invalidOp+"invalid shape-lambda: parameter %d type mismatch (got %s, want %s)", i+1, lsig.Params().At(i).Type(), tsig.Params().At(i).Type())
+                            goto Error
+                        }
+                    }
+                    // Compare results
+                    for i := 0; i < lsig.Results().Len(); i++ {
+                        if !Identical(lsig.Results().At(i).Type(), tsig.Results().At(i).Type()) {
+                            check.errorf(e, InvalidAssert, invalidOp+"invalid shape-lambda: result %d type mismatch (got %s, want %s)", i+1, lsig.Results().At(i).Type(), tsig.Results().At(i).Type())
+                            goto Error
+                        }
+                    }
+                }
+                // Record shape-lambda for this literal's signature and in Info.
+                if lsig, _ := under(lit.typ).(*Signature); lsig != nil {
+                    if check.shapeSigs == nil {
+                        check.shapeSigs = make(map[*Signature]bool)
+                    }
+                    check.shapeSigs[lsig] = true
+                }
+                if check.Info != nil {
+                    if check.Info.ShapeLambdas == nil {
+                        check.Info.ShapeLambdas = make(map[*syntax.FuncLit]bool)
+                    }
+                    check.Info.ShapeLambdas[flit] = true
+                }
+                // Stamp the expression with the asserted target type.
+                x.mode = value
+                x.typ = T
+                x.expr = e
+                return expression
+            }
+		}
+
 		check.expr(nil, x, e.X)
 		if x.mode == invalid {
 			goto Error

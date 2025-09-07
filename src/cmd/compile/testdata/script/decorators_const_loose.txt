@@ -1,0 +1,78 @@
+# looser compile-time evaluation: string concat and len on strings
+
+go run .
+stdout '^5$'
+stdout '^\[X\]ok$'
+stdout '^4$'
+stdout '^ON:ok$'
+stdout '^4$'
+stdout '^1$'
+stdout '^1$'
+
+-- go.mod --
+module example.com/decorators_const_loose
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+// AddK returns a decorator that adds k to the result of f.
+func AddK(k int) func(func() int) func() int {
+    return func(f func() int) func() int { return func() int { return f() + k } }
+}
+
+// Tag returns a decorator that prepends s to the result of f.
+func Tag(s string) func(func(string) string) func(string) string {
+    return func(f func(string) string) func(string) string {
+        return func(x string) string { return s + f(x) }
+    }
+}
+
+// Switch conditionally tags based on on.
+func Switch(on bool) func(func(string) string) func(string) string {
+    return func(f func(string) string) func(string) string {
+        if on { return func(x string) string { return "ON:" + f(x) } }
+        return f
+    }
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "example.com/decorators_const_loose/dec"
+    "unsafe"
+)
+
+@dec.AddK(len("abcd") + 1)
+func A() int { return 0 }
+
+@dec.Tag("[" + "X" + "]")
+func G(s string) string { return s }
+
+@dec.AddK(int(1.5*2.0+1.0))
+func B() int { return 0 }
+
+@dec.Switch(!false && true)
+func H(s string) string { return s }
+
+@dec.AddK(int(unsafe.Sizeof(int32(0))))
+func C() int { return 0 }
+
+@dec.AddK(int(unsafe.Alignof(byte(0))))
+func D() int { return 0 }
+
+@dec.AddK(int(unsafe.Offsetof(struct{A byte; B byte}{ }.B)))
+func E() int { return 0 }
+
+func main() {
+    fmt.Println(A())      // (0)+(4+1) = 5
+    fmt.Println(G("ok"))  // "[X]" + "ok"
+    fmt.Println(B())      // int(1.5*2+1) = 4
+    fmt.Println(H("ok"))  // "ON:" + "ok"
+    fmt.Println(C())      // Sizeof(int32) = 4
+    fmt.Println(D())      // Alignof(byte) = 1
+    fmt.Println(E())      // Offsetof(B) = 1
+}

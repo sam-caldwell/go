@@ -440,6 +440,9 @@ const (
 	UintptrKeepAlive            // pointers converted to uintptr must be kept alive
 	UintptrEscapes              // pointers converted to uintptr escape
 
+	// Decorations
+	NoDecorate // disable decorator processing on this function
+
 	// Runtime-only func pragmas.
 	// See ../../../../runtime/HACKING.md for detailed descriptions.
 	Systemstack        // func must run on system stack

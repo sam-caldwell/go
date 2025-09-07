@@ -1,0 +1,46 @@
+# global flag should disable decoration entirely
+
+go run -gcflags=all=-decorators=off .
+stdout '^ok$'
+stdout '^20$'
+
+-- go.mod --
+module example.com/decorators_flag_off
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+// AddK returns a decorator that adds k to the result of f.
+func AddK(k int) func(func(int) int) func(int) int {
+    return func(f func(int) int) func(int) int {
+        return func(x int) int { return f(x) + k }
+    }
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "example.com/decorators_flag_off/dec"
+)
+
+// Simple in-package decorator: wraps a string result in brackets.
+func D(f func(string) string) func(string) string {
+    return func(s string) string { return "[" + f(s) + "]" }
+}
+
+@D
+func G(s string) string { return s }
+
+@dec.AddK(5)
+func F(x int) int { return x * 2 }
+
+func main() {
+    // With -decorators=off, decorators are ignored: no brackets, no +5.
+    fmt.Println(G("ok")) // expect ok
+    fmt.Println(F(10))   // (10*2) = 20
+}
+

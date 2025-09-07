@@ -246,20 +246,32 @@ func unified(m posMap, noders []*noder) {
 type decoRec struct {
     Exprs   []syntax.Expr
     Imports map[string]string // alias -> package path
+    Pos     []src.XPos         // position of each decorator expression for diagnostics
 }
 
 var funcDecorators map[string]decoRec
+
+// origFuncMap maps wrapper *ir.Func to its synthesized original body *ir.Func.
+var origFuncMap = make(map[*ir.Func]*ir.Func)
 
 // applyDecoratorWrappers rewrites decorated functions into wrappers that call
 // a synthesized $orig function containing the original body. MVP: no actual
 // decorator composition yet; wrapper simply forwards to $orig.
 func applyDecoratorWrappers(target *ir.Package) {
+    // Allow global disable via -decorators=off
+    if v := strings.ToLower(base.Flag.Decorators); v == "off" || v == "0" || v == "false" {
+        return
+    }
     if len(funcDecorators) == 0 {
         return
     }
     for _, fn := range target.Funcs {
         sym := fn.Sym()
         if sym == nil || sym.Pkg != types.LocalPkg {
+            continue
+        }
+        // Skip if function explicitly disables decoration via pragma.
+        if fn.Pragma&ir.NoDecorate != 0 {
             continue
         }
         // Lookup decorators for function or method.
@@ -336,33 +348,73 @@ func applyDecoratorWrappers(target *ir.Package) {
             var fun ir.Node = origFn.Nname
             if n := len(rec.Exprs); n > 0 {
                 for i := n - 1; i >= 0; i-- {
+                    dpos := fn.Pos()
+                    if i < len(rec.Pos) && rec.Pos[i].IsKnown() {
+                        dpos = rec.Pos[i]
+                    }
                     switch dx := rec.Exprs[i].(type) {
                     case *syntax.Name:
                         if d := findDecoratorCallee(dx, rec.Imports); d != nil {
                             // Validate signature: func(S) S
-                            if !checkDecoratorSignature(fn, pos, d, fun.Type()) {
+                            if !checkDecoratorSignature(fn, dpos, d, fun.Type()) {
                                 // emit error and skip this decorator
                                 break
                             }
                             fun = typecheck.Call(pos, d, []ir.Node{fun}, false)
                         } else {
-                            base.ErrorfAt(fn.Pos(), 0, "unknown decorator: %s", dx.Value)
+                            base.ErrorfAt(dpos, 0, "@%s: unknown decorator in this package", dx.Value)
                         }
+                    case *syntax.SelectorExpr:
+                        // Qualified bare decorator: alias.Dec
+                        if pkgName, ok := dx.X.(*syntax.Name); ok {
+                            if rec.Imports != nil {
+                                if path, ok := rec.Imports[pkgName.Value]; ok {
+                                    if name := dx.Sel.Value; name != "" {
+                                        if d := resolveImportedFunc(path, name); d != nil {
+                                            // Validate signature: func(S) S
+                                            if !checkDecoratorSignature(fn, dpos, d, fun.Type()) {
+                                                break
+                                            }
+                                            fun = typecheck.Call(pos, d, []ir.Node{fun}, false)
+                                            continue
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        base.ErrorfAt(dpos, 0, "@%s: unknown qualified decorator", syntax.String(dx))
                     case *syntax.CallExpr:
                         // Parameterized decorator: D(args...)(fun)
                         cal := buildDecoratorCall(pos, dx, rec.Imports)
                         if cal == nil {
-                            base.ErrorfAt(fn.Pos(), 0, "decorator argument is not compile-time evaluable")
+                            base.ErrorfAt(dpos, 0, "@%s: decorator argument is not compile-time evaluable", syntax.String(dx.Fun))
                             continue
                         }
                         // Validate signature: func(S) S
-                        if !checkDecoratorSignature(fn, pos, cal, fun.Type()) {
+                        if !checkDecoratorSignature(fn, dpos, cal, fun.Type()) {
                             break
                         }
                         fun = typecheck.Call(pos, cal, []ir.Node{fun}, false)
                     default:
-                        base.ErrorfAt(fn.Pos(), 0, "unsupported decorator form (qualified names not yet supported)")
+                        base.ErrorfAt(dpos, 0, "unsupported decorator form")
                     }
+                }
+            }
+
+            // Optional: register decorator metadata for runtime/decorators.
+            // Build []string of pretty-printed decorator expressions.
+            if n := len(rec.Exprs); n > 0 {
+                // Construct slice literal of strings
+                var list ir.Nodes
+                for _, dx := range rec.Exprs {
+                    s := syntax.String(dx)
+                    list = append(list, ir.NewString(pos, s))
+                }
+                sl := ir.NewCompLitExpr(pos, ir.OCOMPLIT, types.NewSlice(types.Types[types.TSTRING]), list)
+                // Resolve decorators.Register
+                if cal := resolveImportedFunc("runtime/decorators", "Register"); cal != nil {
+                    // Call Register(fn, []string{...})
+                    _ = typecheck.Call(pos, cal, []ir.Node{fn.Nname, sl}, false)
                 }
             }
 
@@ -378,8 +430,82 @@ func applyDecoratorWrappers(target *ir.Package) {
             }
 
             fn.Body = body
+            // Make wrapper eligible for inlining by computing its inline body now.
+            // This helps the interleaved inliner consider wrappers as candidates
+            // and remove their call overhead when profitable.
+            inline.CanInline(fn, nil)
+            // Mark as a wrapper for debug/DWARF polish and to keep tooling heuristics consistent.
+            fn.SetWrapper(true)
         })
+        // Record mapping for origof lowering.
+        origFuncMap[fn] = origFn
         // Mark function as having been modified.
+    }
+
+    // Lower any uses of origof(fn) to the resolved original function/method values.
+    for _, fn := range target.Funcs {
+        ir.WithFunc(fn, func() {
+            var edit func(ir.Node) ir.Node
+            edit = func(n ir.Node) ir.Node {
+                if n == nil {
+                    return n
+                }
+                // Recurse first.
+                ir.EditChildren(n, edit)
+
+                call, ok := n.(*ir.CallExpr)
+                if !ok {
+                    return n
+                }
+                // Handle origof builtin
+                if call.Fun.Op() == ir.ONAME {
+                    nm := call.Fun.(*ir.Name)
+                    if nm.Sym() != nil && nm.Sym().Name == "origof" {
+                        if len(call.Args) != 1 {
+                            return n
+                        }
+                        arg := call.Args[0]
+                        switch arg.Op() {
+                        case ir.ONAME:
+                            an := arg.(*ir.Name)
+                            if an.Class == ir.PFUNC && an.Func != nil {
+                                if ofn, ok := origFuncMap[an.Func]; ok && ofn != nil {
+                                    return ofn.Nname
+                                }
+                                return arg
+                            }
+                        case ir.OMETHEXPR:
+                            me := arg.(*ir.SelectorExpr)
+                            if mname := ir.MethodExprName(me); mname != nil {
+                                if ofn, ok := origFuncMap[mname.Func]; ok && ofn != nil {
+                                    return ofn.Nname
+                                }
+                                return arg
+                            }
+                        }
+                        return arg
+                    }
+                }
+                // Lower (compose(d1,...,dn))(f) to nested application d1(d2(...(dn(f))...)).
+                if inner, ok := call.Fun.(*ir.CallExpr); ok {
+                    if inName, ok2 := inner.Fun.(*ir.Name); ok2 && inName.Sym() != nil && inName.Sym().Name == "compose" {
+                        if len(call.Args) != 1 {
+                            return n
+                        }
+                        fun := call.Args[0]
+                        for i := len(inner.Args) - 1; i >= 0; i-- {
+                            d := inner.Args[i]
+                            fun = typecheck.Call(call.Pos(), d, []ir.Node{fun}, false)
+                        }
+                        return fun
+                    }
+                }
+                return n
+            }
+            for i, stmt := range fn.Body {
+                fn.Body[i] = edit(stmt)
+            }
+        })
     }
 }
 
@@ -495,14 +621,19 @@ func decoratorConstArg(pos src.XPos, e syntax.Expr, imports map[string]string) i
         return decoratorConstArg(pos, x.X, imports)
     case *syntax.Operation:
         if x.Y == nil {
-            // Unary
+            // Unary numeric ops
             if v, ok := evalConstInt64(x, imports); ok {
                 return ir.NewInt(pos, v)
             }
             return nil
         }
+        // Try numeric first
         if v, ok := evalConstInt64(x, imports); ok {
             return ir.NewInt(pos, v)
+        }
+        // Try string concatenation
+        if s, ok := evalConstString(x, imports); ok {
+            return ir.NewString(pos, s)
         }
         return nil
     case *syntax.SelectorExpr:
@@ -569,6 +700,42 @@ func decoratorConstArg(pos src.XPos, e syntax.Expr, imports map[string]string) i
         }
         return ir.NewCompLitExpr(pos, ir.OCOMPLIT, typ, list)
     case *syntax.CallExpr:
+        // Builtin len on constant string
+        if name, ok := x.Fun.(*syntax.Name); ok && name.Value == "len" && len(x.ArgList) == 1 {
+            if s, ok := constStringFromExpr(pos, x.ArgList[0], imports); ok {
+                return ir.NewInt(pos, int64(len(s)))
+            }
+            return nil
+        }
+        // unsafe.Sizeof/Alignof/Offsetof on resolvable types/fields
+        if sel, ok := x.Fun.(*syntax.SelectorExpr); ok && len(x.ArgList) == 1 {
+            if pkgIdent, ok := sel.X.(*syntax.Name); ok && pkgIdent.Value == "unsafe" {
+                switch sel.Sel.Value {
+                case "Sizeof":
+                    if t := typeFromExpr(x.ArgList[0], imports); t != nil {
+                        return ir.NewInt(pos, t.Size())
+                    }
+                case "Alignof":
+                    if t := typeFromExpr(x.ArgList[0], imports); t != nil {
+                        return ir.NewInt(pos, t.Alignment())
+                    }
+                case "Offsetof":
+                    // Expect selector on a composite literal with explicit struct type
+                    if se, ok := x.ArgList[0].(*syntax.SelectorExpr); ok {
+                        // retrieve struct type
+                        if cl, ok := se.X.(*syntax.CompositeLit); ok && cl.Type != nil {
+                            if st := resolveTypeFromSyntax(cl.Type, imports); st != nil && st.Kind() == types.TSTRUCT {
+                                // ensure field exists and size computed
+                                _ = st.Size()
+                                off := st.OffsetOf(se.Sel.Value)
+                                return ir.NewInt(pos, off)
+                            }
+                        }
+                    }
+                }
+                return nil
+            }
+        }
         // Typed conversion of constant: Type(const)
         toType := resolveTypeFromSyntax(x.Fun, imports)
         if toType == nil || len(x.ArgList) != 1 {
@@ -748,6 +915,202 @@ func evalConstInt64(e *syntax.Operation, imports map[string]string) (int64, bool
     }
 
     return val(e)
+}
+
+// evalConstBool evaluates a boolean constant expression for simple
+// unary/binary ops. Supports !, &&, || and ==/!= on boolean values.
+func evalConstBoolOp(e *syntax.Operation, imports map[string]string) (bool, bool) {
+    // helper to extract bool from syntax.Expr
+    var val func(syntax.Expr) (bool, bool)
+    val = func(ex syntax.Expr) (bool, bool) {
+        switch t := ex.(type) {
+        case *syntax.Name:
+            if t.Value == "true" {
+                return true, true
+            }
+            if t.Value == "false" {
+                return false, true
+            }
+            if n := resolveLocalConst(t.Value); n != nil {
+                if bv, ok := constant.BoolVal(n.(*ir.Name).Val()); ok {
+                    return bv, true
+                }
+            }
+            return false, false
+        case *syntax.SelectorExpr:
+            if alias, ok := t.X.(*syntax.Name); ok {
+                if imports != nil {
+                    if path, ok := imports[alias.Value]; ok {
+                        if n := resolveImportedConst(src.NoXPos, path, t.Sel.Value); n != nil {
+                            if bv, ok := constant.BoolVal(n.(*ir.Name).Val()); ok {
+                                return bv, true
+                            }
+                        }
+                    }
+                }
+            }
+            return false, false
+        case *syntax.ParenExpr:
+            return val(t.X)
+        case *syntax.Operation:
+            if t.Y == nil {
+                if t.Op == syntax.Not {
+                    if v, ok := val(t.X); ok {
+                        return !v, true
+                    }
+                }
+                return false, false
+            }
+            lv, ok1 := val(t.X)
+            rv, ok2 := val(t.Y)
+            if !ok1 || !ok2 {
+                return false, false
+            }
+            switch t.Op {
+            case syntax.AndAnd:
+                return lv && rv, true
+            case syntax.OrOr:
+                return lv || rv, true
+            case syntax.Eql:
+                return lv == rv, true
+            case syntax.Neq:
+                return lv != rv, true
+            default:
+                return false, false
+            }
+        default:
+            return false, false
+        }
+    }
+    return val(e)
+}
+
+// evalConstString evaluates a constant string expression for simple
+// concatenation. Supports literals, local/imported string consts,
+// parentheses, and binary +.
+func evalConstString(e *syntax.Operation, imports map[string]string) (string, bool) {
+    // helper to extract string from syntax.Expr
+    var val func(syntax.Expr) (string, bool)
+    val = func(ex syntax.Expr) (string, bool) {
+        switch t := ex.(type) {
+        case *syntax.BasicLit:
+            if t.Kind == syntax.StringLit {
+                s, err := strconv.Unquote(t.Value)
+                if err == nil {
+                    return s, true
+                }
+            }
+            return "", false
+        case *syntax.Name:
+            if n := resolveLocalConst(t.Value); n != nil {
+                if sv, ok := constant.StringVal(n.(*ir.Name).Val()); ok {
+                    return sv, true
+                }
+            }
+            return "", false
+        case *syntax.SelectorExpr:
+            if alias, ok := t.X.(*syntax.Name); ok {
+                if imports != nil {
+                    if path, ok := imports[alias.Value]; ok {
+                        if n := resolveImportedConst(src.NoXPos, path, t.Sel.Value); n != nil {
+                            if sv, ok := constant.StringVal(n.(*ir.Name).Val()); ok {
+                                return sv, true
+                            }
+                        }
+                    }
+                }
+            }
+            return "", false
+        case *syntax.ParenExpr:
+            return val(t.X)
+        case *syntax.Operation:
+            if t.Y == nil {
+                return "", false
+            }
+            // Binary + only
+            if t.Op != syntax.Add {
+                return "", false
+            }
+            ls, ok1 := val(t.X)
+            rs, ok2 := val(t.Y)
+            if !ok1 || !ok2 {
+                return "", false
+            }
+            return ls + rs, true
+        default:
+            return "", false
+        }
+    }
+    return val(e)
+}
+
+// constStringFromExpr tries to get a constant string value from a syntax.Expr
+// using the same limited forms as evalConstString.
+func constStringFromExpr(pos src.XPos, ex syntax.Expr, imports map[string]string) (string, bool) {
+    switch t := ex.(type) {
+    case *syntax.BasicLit:
+        if t.Kind == syntax.StringLit {
+            s, err := strconv.Unquote(t.Value)
+            if err == nil {
+                return s, true
+            }
+        }
+        return "", false
+    case *syntax.ParenExpr:
+        return constStringFromExpr(pos, t.X, imports)
+    case *syntax.Operation:
+        if s, ok := evalConstString(t, imports); ok {
+            return s, true
+        }
+        return "", false
+    case *syntax.Name:
+        if n := resolveLocalConst(t.Value); n != nil {
+            if sv, ok := constant.StringVal(n.(*ir.Name).Val()); ok {
+                return sv, true
+            }
+        }
+        return "", false
+    case *syntax.SelectorExpr:
+        if alias, ok := t.X.(*syntax.Name); ok {
+            if imports != nil {
+                if path, ok := imports[alias.Value]; ok {
+                    if n := resolveImportedConst(src.NoXPos, path, t.Sel.Value); n != nil {
+                        if sv, ok := constant.StringVal(n.(*ir.Name).Val()); ok {
+                            return sv, true
+                        }
+                    }
+                }
+            }
+        }
+        return "", false
+    default:
+        return "", false
+    }
+}
+
+// typeFromExpr attempts to resolve a gc/types.Type from a syntax.Expr when it
+// syntactically denotes a type: a direct type (e.g., struct{...}), a type in a
+// composite literal, or a conversion T(x).
+func typeFromExpr(e syntax.Expr, imports map[string]string) *types.Type {
+    for {
+        switch t := e.(type) {
+        case *syntax.ParenExpr:
+            e = t.X
+        case *syntax.CompositeLit:
+            if t.Type != nil {
+                return resolveTypeFromSyntax(t.Type, imports)
+            }
+            return nil
+        case *syntax.CallExpr:
+            // T(x) conversion form: resolve T from callee
+            if to := resolveTypeFromSyntax(t.Fun, imports); to != nil {
+                return to
+            }
+            return nil
+        default:
+            return resolveTypeFromSyntax(e, imports)
+        }
+    }
 }
 
 // resolveTypeFromSyntax attempts to resolve a type from syntax using

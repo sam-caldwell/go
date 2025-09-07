@@ -1,0 +1,62 @@
+% inlining/optimization stability for decorated functions (including variadic)
+
+go run .
+stdout '^11$'
+stdout '^10$'
+stdout '^10$'
+
+go run -gcflags=all=-l .
+stdout '^11$'
+stdout '^10$'
+stdout '^10$'
+
+-- go.mod --
+module example.com/decorators_inlining
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D increments the result of a unary int function.
+func D(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) + 1 }
+}
+
+// Twice doubles the result of a unary int function.
+func Twice(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) * 2 }
+}
+
+// WrapVariadic forwards variadic args unchanged.
+func WrapVariadic() func(func(int, ...int) int) func(int, ...int) int {
+    return func(f func(int, ...int) int) func(int, ...int) int {
+        return func(a int, xs ...int) int { return f(a, xs...) }
+    }
+}
+
+@D
+func F(x int) int { return x * 2 }
+
+@WrapVariadic()
+func G(a int, xs ...int) int {
+    sum := a
+    for _, v := range xs { sum += v }
+    return sum
+}
+
+@Twice
+@D
+func C(x int) int { return x }
+
+func main() {
+    // Expect consistent results with and without inlining enabled.
+    fmt.Println(F(5))       // (5*2)+1 = 11
+    fmt.Println(G(1,2,3,4)) // 1+2+3+4 = 10
+    fmt.Println(C(4))       // (4+1)*2 = 10
+}
+

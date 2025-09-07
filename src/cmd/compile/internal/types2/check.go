@@ -183,7 +183,20 @@ type Checker struct {
 
 	// debugging
 	posStack []syntax.Pos // stack of source positions seen; used for panic tracing
-	indent   int          // indentation for tracing
+    indent   int          // indentation for tracing
+
+    // shape-lambda tracking: signatures of func literals stamped via shape-lambda
+    // affordance within which special identifiers (args/rets) are permitted.
+    shapeSigs map[*Signature]bool
+}
+
+// shapeLambdaActive reports whether the current function being type-checked
+// is a shape-lambda (stamped func literal).
+func (check *Checker) shapeLambdaActive() bool {
+    if check.sig == nil || check.shapeSigs == nil {
+        return false
+    }
+    return check.shapeSigs[check.sig]
 }
 
 // addDeclDep adds the dependency edge (check.decl -> to) if check.decl exists

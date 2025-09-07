@@ -260,6 +260,33 @@ func G() {}
     }
 }
 
+// TestFuncLitAsSyntax ensures the parser accepts "func... as T" stamping and
+// rewrites it into an AssertExpr over a FuncLit.
+func TestFuncLitAsSyntax(t *testing.T) {
+    const src = `package p
+
+var _ = func() {} as func()
+`
+    f, err := Parse(NewFileBase("as.go"), bytes.NewReader([]byte(src)), func(err error) { t.Error(err) }, nil, 0)
+    if err != nil {
+        t.Fatalf("parse failed: %v", err)
+    }
+    // Find the AssertExpr
+    var got bool
+    Walk(f, func(n Node) bool {
+        if ae, ok := n.(*AssertExpr); ok {
+            if _, ok2 := ae.X.(*FuncLit); ok2 {
+                got = true
+                return false
+            }
+        }
+        return true
+    })
+    if !got {
+        t.Fatalf("expected AssertExpr over FuncLit produced by 'as' syntax")
+    }
+}
+
 func TestDecoratorQualifiedAndParameterized(t *testing.T) {
     const src = `package p
 

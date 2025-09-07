@@ -126,7 +126,10 @@ type CmdFlags struct {
 	TrimPath           string       "help:\"remove `prefix` from recorded source file paths\""
 	WB                 bool         "help:\"enable write barrier\"" // TODO: remove
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
-	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
+    ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
+
+    // Decorators control (experimental)
+    Decorators         string       "help:\"enable or disable decorators globally (on|off)\""
 
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {
@@ -186,8 +189,8 @@ func ParseFlags() {
 	Debug.SyncFrames = -1            // disable sync markers by default
 	Debug.VariableMakeThreshold = 32 // 32 byte default for stack allocated make results
 	Debug.ZeroCopy = 1
-	Debug.RangeFuncCheck = 1
-	Debug.MergeLocals = 1
+    Debug.RangeFuncCheck = 1
+    Debug.MergeLocals = 1
 
 	Debug.Checkptr = -1 // so we can tell whether it is set explicitly
 

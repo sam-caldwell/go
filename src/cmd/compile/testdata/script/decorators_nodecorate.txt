@@ -1,0 +1,36 @@
+# per-function pragma should disable decoration for that function only
+
+go run .
+stdout '^ok$'
+stdout '^\[ok\]$'
+
+-- go.mod --
+module example.com/decorators_nodecorate
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D wraps the string result in brackets.
+func D(f func(string) string) func(string) string {
+    return func(s string) string { return "[" + f(s) + "]" }
+}
+
+//go:nodecorate
+@D
+func G1(s string) string { return s }
+
+@D
+func G2(s string) string { return s }
+
+func main() {
+    // G1 should not be decorated due to pragma; G2 should be decorated.
+    fmt.Println(G1("ok")) // expect ok
+    fmt.Println(G2("ok")) // expect [ok]
+}
+

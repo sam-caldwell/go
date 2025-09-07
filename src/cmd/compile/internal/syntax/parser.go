@@ -1128,9 +1128,25 @@ func (p *parser) pexpr(x Expr, keep_parens bool) Expr {
 		defer p.trace("pexpr")()
 	}
 
-	if x == nil {
-		x = p.operand(keep_parens)
-	}
+    if x == nil {
+        x = p.operand(keep_parens)
+        // Shape-lambda affordance: allow post-func literal stamping using
+        // "as T" and rewrite it into an AssertExpr equivalent to
+        // (func(...) {...}).(T). We only recognize "as" immediately following
+        // a function literal to avoid ambiguity with ordinary identifiers.
+        if flit, ok := x.(*FuncLit); ok && p.tok == _Name && p.lit == "as" {
+            pos := p.pos()
+            // consume 'as'
+            _ = p.name() // advances past the name token
+            // parse the target type
+            typ := p.type_()
+            t := new(AssertExpr)
+            t.pos = pos
+            t.X = flit
+            t.Type = typ
+            x = t
+        }
+    }
 
 loop:
 	for {

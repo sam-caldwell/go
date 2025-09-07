@@ -144,6 +144,40 @@ func defPredeclaredTypes() {
 		typ.SetUnderlying(ityp)
 		def(obj)
 	}
+
+	// builtin constraint: funcsig
+	// For now, model funcsig as an (unnamed) interface with the top type set.
+	// This declares the predeclared identifier so it can be used in generic
+	// constraints (e.g., Decorator[S funcsig]). Restricting to function types
+	// will be enforced elsewhere until richer type set support is added.
+	{
+		obj := NewTypeName(nopos, nil, "funcsig", nil)
+		obj.setColor(black)
+		typ := NewNamed(obj, nil, nil)
+		ityp := &Interface{complete: true, tset: &topTypeSet}
+		typ.SetUnderlying(ityp)
+		def(obj)
+	}
+
+	// generic alias: type Decorator[S funcsig] func(S) S
+	// Inserted as a predeclared type to express decorator kinds.
+	{
+		// Type parameter S with constraint funcsig
+		Sname := NewTypeName(nopos, nil, "S", nil)
+		S := NewTypeParam(Sname, Universe.Lookup("funcsig").Type())
+
+		// func(S) S signature
+		p := newVar(ParamVar, nopos, nil, "", S)
+		r := newVar(ResultVar, nopos, nil, "", S)
+		sig := NewSignatureType(nil, nil, nil, NewTuple(p), NewTuple(r), false)
+
+		obj := NewTypeName(nopos, nil, "Decorator", nil)
+		obj.setColor(black)
+		alias := NewAlias(obj, sig)
+		alias.SetTypeParams([]*TypeParam{S})
+		// Ensure alias object is recorded; def will place exported predeclared identifiers appropriately.
+		def(obj)
+	}
 }
 
 var predeclaredConsts = [...]struct {
@@ -203,6 +237,8 @@ const (
 	// testing support
 	_Assert
 	_Trace
+	_Origof
+	_Compose
 )
 
 var predeclaredFuncs = [...]struct {
@@ -241,7 +277,9 @@ var predeclaredFuncs = [...]struct {
 	_StringData: {"StringData", 1, false, expression},
 
 	_Assert: {"assert", 1, false, statement},
-	_Trace:  {"trace", 0, true, statement},
+	_Trace:   {"trace", 0, true, statement},
+	_Origof:  {"origof", 1, false, expression},
+	_Compose: {"compose", 1, true, expression},
 }
 
 func defPredeclaredFuncs() {

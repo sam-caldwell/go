@@ -1,0 +1,47 @@
+# shape-lambda: next(args...) forwards fixed and variadic params
+
+go run .
+stdout '^7$'
+stdout '^10$'
+
+-- go.mod --
+module example.com/decorators_shape_args
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+// Forward2 forwards a fixed-arity function using shape-lambda args.
+func Forward2(next func(int,int) int) func(int,int) int {
+    return (func(a int, b int) int { return next(args...) }) as func(int,int) int
+}
+
+// ForwardVar forwards a variadic function using shape-lambda args.
+func ForwardVar(next func(int, ...int) int) func(int, ...int) int {
+    return (func(a int, xs ...int) int { return next(args...) }) as func(int, ...int) int
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "example.com/decorators_shape_args/dec"
+)
+
+@dec.Forward2
+func Add2(a, b int) int { return a + b }
+
+@dec.ForwardVar
+func Sum(a int, xs ...int) int {
+    s := a
+    for _, v := range xs { s += v }
+    return s
+}
+
+func main() {
+    fmt.Println(Add2(3,4))      // 7
+    fmt.Println(Sum(1,2,3,4))   // 10
+}
+

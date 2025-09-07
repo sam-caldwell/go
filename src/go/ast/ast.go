@@ -1001,6 +1001,12 @@ type (
 		Name *Ident        // function/method name
 		Type *FuncType     // function signature: type and value parameters, results, and position of "func" keyword
 		Body *BlockStmt    // function body; or nil for external (non-Go) function
+
+		// Decorators parsed immediately above this function declaration (optional).
+		// Each expression should be a syntactically valid decorator expression,
+		// such as a bare identifier, a qualified selector, or a call with
+		// compile-time-evaluable arguments.
+		Decorators []Expr
 	}
 )
 

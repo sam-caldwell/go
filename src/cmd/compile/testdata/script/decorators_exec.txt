@@ -1,0 +1,70 @@
+# execution tests for decorators: qualified, parameterized, variadic, and composition order
+
+go run .
+stdout '\[ok\]'
+stdout '^25$'
+stdout '^10$'
+stdout '^14$'
+
+-- go.mod --
+module example.com/decorators_exec
+
+go 1.23
+
+-- dec/dec.go --
+package dec
+
+// AddK returns a decorator that adds k to the result of f.
+func AddK(k int) func(func(int) int) func(int) int {
+    return func(f func(int) int) func(int) int {
+        return func(x int) int { return f(x) + k }
+    }
+}
+
+// WrapVariadic returns a decorator that simply forwards variadic args.
+func WrapVariadic() func(func(int, ...int) int) func(int, ...int) int {
+    return func(f func(int, ...int) int) func(int, ...int) int {
+        return func(a int, xs ...int) int { return f(a, xs...) }
+    }
+}
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+    "example.com/decorators_exec/dec"
+)
+
+// In-package decorator that wraps a string function in brackets.
+func D(f func(string) string) func(string) string {
+    return func(s string) string { return "[" + f(s) + "]" }
+}
+
+@D
+func G(s string) string { return s }
+
+@dec.AddK(5)
+func F(x int) int { return x * 2 }
+
+@dec.WrapVariadic()
+func H(a int, xs ...int) int {
+    sum := a
+    for _, v := range xs { sum += v }
+    return sum
+}
+
+// Composition order bottom→top: closest decorator applies first.
+func Twice(f func(int) int) func(int) int { return func(x int) int { return f(x) * 2 } }
+
+@Twice
+@dec.AddK(3)
+func C(x int) int { return x }
+
+func main() {
+    fmt.Println(G("ok"))   // expect [ok]
+    fmt.Println(F(10))     // (10*2)+5 = 25
+    fmt.Println(H(1,2,3,4))// 1+2+3+4 = 10
+    fmt.Println(C(4))      // (4+3)*2 = 14
+}
+

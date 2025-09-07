@@ -1,0 +1,49 @@
+# execution tests for decorators on methods: value and pointer receivers, composition order
+
+go run .
+stdout '^5$'
+stdout '^7$'
+stdout '^10$'
+
+-- go.mod --
+module example.com/decorators_methods
+
+go 1.23
+
+-- main.go --
+package main
+
+import (
+    "fmt"
+)
+
+// D is an in-package decorator that increments the result of f.
+func D(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) + 1 }
+}
+
+// Twice doubles the result of f.
+func Twice(f func(int) int) func(int) int {
+    return func(x int) int { return f(x) * 2 }
+}
+
+type T struct{}
+
+@D
+func (t T) M(x int) int { return x }
+
+@D
+func (t *T) P(x int) int { return x * 3 }
+
+// Composition on methods: bottom→top (closest applies first).
+@Twice
+@D
+func (t T) N(x int) int { return x }
+
+func main() {
+    var t T
+    fmt.Println(t.M(4))   // (4)+1 = 5
+    fmt.Println((&t).P(2))// (2*3)+1 = 7
+    fmt.Println(t.N(4))   // (4+1)*2 = 10
+}
+
