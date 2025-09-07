@@ -40,3 +40,10 @@ places to ask questions about the Go language.
 
 [rf]: https://reneefrench.blogspot.com/
 [cc4-by]: https://creativecommons.org/licenses/by/4.0/
+
+### Fork Notes: Decorators Prototype
+
+This repository is a fork experimenting with Python-style `@decorator` syntax for Go.
+
+- Spec: see `SPECIFICATION-decorators.md` for the full proposal.
+- Guide: see `doc/decorators.md` for a short practical overview and examples.
